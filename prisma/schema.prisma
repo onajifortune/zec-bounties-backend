@@ -1,0 +1,122 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model BountyCategory {
+  id       Int      @id @default(autoincrement())
+  name     String   @unique
+  bounties Bounty[] @relation("BountyCategory")
+
+  @@map("bounty_categories")
+}
+
+model User {
+  id                   String              @id @default(cuid())
+  name                 String
+  email                String              @unique
+  password             String?
+  role                 UserRole            @default(CLIENT)
+  createdAt            DateTime            @default(now())
+  z_address            String?
+  avatar               String?
+  githubId             String?
+  isTest               Boolean             @default(false)
+  assignedBounties     Bounty[]            @relation("AssignedBounties")
+  createdBounties      Bounty[]            @relation("CreatedBounties")
+  reviewedApplications BountyApplication[] @relation("UserReviews")
+  bountyApplications   BountyApplication[] @relation("ApplicantUser")
+  reviewedWork         WorkSubmission[]    @relation("ReviewedWork")
+  submittedWork        WorkSubmission[]    @relation("SubmittedWork")
+}
+
+model Bounty {
+  id                String              @id @default(cuid())
+  title             String
+  description       String
+  bountyAmount      Float
+  dateCreated       DateTime            @default(now())
+  timeToComplete    DateTime
+  status            String              @default("To Do")
+  isApproved        Boolean             @default(false)
+  isPaid            Boolean             @default(false)
+  paymentAuthorized Boolean             @default(false)
+  paymentScheduled  String?
+  paymentBatchId    String?
+  paidAt            DateTime?
+  categoryId        String?
+  createdBy         String
+  assignee          String?
+  difficulty        Difficulty              @default(EASY)
+  assigneeUser      User?               @relation("AssignedBounties", fields: [assignee], references: [id])
+  createdByUser     User                @relation("CreatedBounties", fields: [createdBy], references: [id])
+  category          BountyCategory?     @relation("BountyCategory", fields: [categoryId], references: [name])
+  applications      BountyApplication[]
+  workSubmissions   WorkSubmission[]
+}
+
+model BountyApplication {
+  id            String    @id @default(cuid())
+  bountyId      String
+  applicantId   String
+  message       String
+  status        String    @default("pending")
+  appliedAt     DateTime  @default(now())
+  reviewedAt    DateTime?
+  reviewedBy    String?
+  reviewerUser  User?     @relation("UserReviews", fields: [reviewedBy], references: [id])
+  applicantUser User      @relation("ApplicantUser", fields: [applicantId], references: [id])
+  bounty        Bounty    @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+
+  @@unique([bountyId, applicantId])
+  @@map("bounty_applications")
+}
+
+model Transaction {
+  id        Int      @id @default(autoincrement())
+  txHash    String
+  amount    Float
+  createdAt DateTime @default(now())
+  status    String   @default("completed")
+}
+
+model WorkSubmission {
+  id             String    @id @default(cuid())
+  bountyId       String
+  submittedBy    String
+  description    String
+  deliverableUrl String?
+  submittedAt    DateTime  @default(now())
+  reviewedAt     DateTime?
+  reviewedBy     String?
+  reviewNotes    String?
+  status         String    @default("pending")
+  reviewerUser   User?     @relation("ReviewedWork", fields: [reviewedBy], references: [id])
+  submitterUser  User      @relation("SubmittedWork", fields: [submittedBy], references: [id])
+  bounty         Bounty    @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+
+  @@map("work_submissions")
+}
+
+enum UserRole {
+  CLIENT
+  ADMIN
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum Status {
+  TO_DO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+  CANCELLED
+}
