@@ -4,8 +4,8 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { PrismaClient } = require("@prisma/client");
 const { authenticate, isAdmin } = require("../middleware/auth");
-const { verifyZaddress } = require("../helpers/db-query.js");
-const { isSaplingZcashAddress } = require("../utils/zingolib/parseAddresses");
+// const { verifyZaddress } = require("../helpers/db-query.js");
+// const { isSaplingZcashAddress } = require("../utils/zingolib/parseAddresses");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -150,7 +150,7 @@ router.get("/github/callback", async (req, res) => {
         headers: {
           Accept: "application/json", // Important: Get JSON response
         },
-      }
+      },
     );
 
     const accessToken = tokenResponse.data.access_token;
@@ -170,7 +170,7 @@ router.get("/github/callback", async (req, res) => {
       "https://api.github.com/user/emails",
       {
         headers: { Authorization: `Bearer ${accessToken}` },
-      }
+      },
     );
 
     const githubUser = userResponse.data;
@@ -274,7 +274,8 @@ router.post(
 
       // Await if verifyZaddress is async
       // const result = verifyZaddress(z_address);
-      const result = await isSaplingZcashAddress(z_address);
+      // const result = await isSaplingZcashAddress(z_address);
+      const result = true;
       console.log("Verification result:", result);
 
       return res.json({ isVerified: result });
@@ -282,7 +283,7 @@ router.post(
       console.error("Error verifying Z-address:", err);
       return res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 router.patch("/update-zaddress", authenticate, async (req, res) => {
@@ -290,7 +291,9 @@ router.patch("/update-zaddress", authenticate, async (req, res) => {
 
   console.log(z_address);
 
-  const validAddress = verifyZaddress(z_address);
+  // const validAddress = verifyZaddress(z_address);
+
+  const validAddress = true;
 
   if (!validAddress) {
     return res.status(400).json({ error: "Invalid z_address" });

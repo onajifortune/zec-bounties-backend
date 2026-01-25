@@ -16,3 +16,6 @@ prisma/dev2.db
 prisma/migrations
 ./prisma/migrations
 /generated/prisma
+
+utils
+zingolib-wrapper

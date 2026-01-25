@@ -4,19 +4,19 @@ const prisma = new PrismaClient();
 const router = express.Router();
 const axios = require("axios");
 const { authenticate, isAdmin } = require("../middleware/auth");
-const executeZingoCliAddresses = require("../utils/zingoLibAddresses.js");
-const executeZingoQuickSend = require("../utils/zingoLibQuickSend.js");
+// const executeZingoCliAddresses = require("../utils/zingoLibAddresses.js");
+// const executeZingoQuickSend = require("../utils/zingoLibQuickSend.js");
 const { findDueBounties } = require("../helpers/db-query.js");
 const {
   buildPaymentList,
   updateDueBounties,
   storeTransactions,
 } = require("../helpers/db-query.js");
-const executeZingoCli = require("../utils/zingoLib.js");
-const { getSapplingAddressBalance } = require("../utils/zingolib/getBalance");
-const { getSapplingAddress } = require("../utils/zingolib/getAddress");
-const { getHelp } = require("../utils/zingolib/getHelp");
-const { getSummaries } = require("../utils/zingolib/getSummaries");
+// const executeZingoCli = require("../utils/zingoLib.js");
+// const { getSapplingAddressBalance } = require("../utils/zingolib/getBalance");
+// const { getSapplingAddress } = require("../utils/zingolib/getAddress");
+// const { getHelp } = require("../utils/zingolib/getHelp");
+// const { getSummaries } = require("../utils/zingolib/getSummaries");
 
 // List transactions (Admin)
 router.get(
@@ -30,26 +30,26 @@ router.get(
     res.json(0.0);
   },
 );
-router.get(
-  "/help",
-  //  authenticate, isAdmin,
-  async (req, res) => {
-    // const balance = executeZingoCli("balance");
-    // const result = balance[1] || balance;
-    const result = await getHelp();
-    res.type("text/plain").send(result);
-  },
-);
-router.get(
-  "/summaries",
-  //  authenticate, isAdmin,
-  async (req, res) => {
-    // const balance = executeZingoCli("balance");
-    // const result = balance[1] || balance;
-    const result = await getSummaries();
-    res.type("text/plain").send(result);
-  },
-);
+// router.get(
+//   "/help",
+//   //  authenticate, isAdmin,
+//   async (req, res) => {
+//     // const balance = executeZingoCli("balance");
+//     // const result = balance[1] || balance;
+//     const result = await getHelp();
+//     res.type("text/plain").send(result);
+//   },
+// );
+// router.get(
+//   "/summaries",
+//   //  authenticate, isAdmin,
+//   async (req, res) => {
+//     // const balance = executeZingoCli("balance");
+//     // const result = balance[1] || balance;
+//     const result = await getSummaries();
+//     res.type("text/plain").send(result);
+//   },
+// );
 
 // List transactions (Admin)
 router.get(
@@ -73,7 +73,8 @@ router.get(
 router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
   const dueBounties = await findDueBounties();
   const { paymentList, totalZecAmount } = await buildPaymentList(dueBounties);
-  const sendResult = executeZingoQuickSend(paymentList);
+  // const sendResult = executeZingoQuickSend(paymentList);
+  const sendResult = [["None"]];
 
   try {
     const result = sendResult[1];
@@ -107,7 +108,8 @@ router.post(
       const dueBounties = await findDueBounties();
       const paymentList = await buildPaymentList(dueBounties);
 
-      const transaction = executeZingoQuickSend(paymentList);
+      // const transaction = executeZingoQuickSend(paymentList);
+      const transaction = [];
 
       // Find the bounty
       const bounty = await prisma.bounty.findUnique({
