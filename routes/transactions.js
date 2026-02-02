@@ -4,30 +4,84 @@ const prisma = new PrismaClient();
 const router = express.Router();
 const axios = require("axios");
 const { authenticate, isAdmin } = require("../middleware/auth");
-// const executeZingoCliAddresses = require("../utils/zingoLibAddresses.js");
-// const executeZingoQuickSend = require("../utils/zingoLibQuickSend.js");
+const executeZingoQuickSend = require("../utils/zingoLibQuickSend.js");
 const { findDueBounties } = require("../helpers/db-query.js");
 const {
   buildPaymentList,
   updateDueBounties,
   storeTransactions,
 } = require("../helpers/db-query.js");
-// const executeZingoCli = require("../utils/zingoLib.js");
-// const { getSapplingAddressBalance } = require("../utils/zingolib/getBalance");
-// const { getSapplingAddress } = require("../utils/zingolib/getAddress");
-// const { getHelp } = require("../utils/zingolib/getHelp");
-// const { getSummaries } = require("../utils/zingolib/getSummaries");
+const { initZcashOnce } = require("../zcash/init");
+const executeZingoCli = require("../utils/zingoLib.js");
+const executeZingoCliTransactions = require("../utils/zingoLibTransactions.js");
+const executeZingoCheckBalance = require("../utils/zingoLibCheckBalance.js");
+const executeZingoCliAddresses = require("../utils/zingoLibAddresses.js");
+const { getLatestZcashParams } = require("../helpers/zcash/zcashHelper.js.js");
+const executeZingoParseAddress = require("../utils/zingoLibParseAddress.js");
+const executeZingoCliSync = require("../utils/zingoLibSync.js");
 
 // List transactions (Admin)
+router.get("/", authenticate, isAdmin, async (req, res) => {
+  const params = await getLatestZcashParams(req.user.id);
+  console.log(params);
+  // const txs = await prisma.transaction.findMany({
+  //   select: {
+  //     id: true,
+  //     txHash: true,
+  //     amount: true,
+  //     createdAt: true,
+  //   },
+  //   orderBy: {
+  //     createdAt: "desc",
+  //   },
+  // });
+  const txs = await executeZingoCliTransactions("transactions", params);
+
+  // await prisma.transaction.update({
+  //   where: { id: 256 }, // find the row to fix
+  //   data: {
+  //     amount: 0.2,
+  //   },
+  // });
+
+  res.json(txs);
+});
+
+router.get("/balance", authenticate, isAdmin, async (req, res) => {
+  if (req.user.role === "ADMIN") {
+    await initZcashOnce((ownerId = req.user.id), (accountName = "Main"));
+  }
+
+  const params = await getLatestZcashParams(req.user.id);
+  console.log(params);
+  const data = await executeZingoCheckBalance("balance", params);
+  if (params.chain === "testnet") {
+    res.json(data.confirmed_orchard_balance);
+  } else if (params.chain === "testnet") {
+    res.json(data.confirmed_sapling_balance);
+  }
+});
 router.get(
-  "/balance",
+  "/test",
   //  authenticate, isAdmin,
   async (req, res) => {
+    // await initZcashOnce("Main");
     // const balance = executeZingoCli("balance");
     // const result = balance[1] || balance;
     // const result = await getSapplingAddressBalance();
     // res.json(result);
-    res.json(0.0);
+    // zs1th7l7vk07a4e0ddh8ueglntk8940ej8vcp7ucuy3t77cpslkvvujlvqjjd6svdhxnxve7n62yes
+    // utest18jxt2wjaklhtny5hx8xp7036v0qpy76j0rcsczsw34prh2svs6qst5eumxm35k9lpf3efxf0rayhh2u85zspp7m7z5w6288n2vzzu5u8
+    const data = await executeZingoCliSync(
+      "sync run",
+      (params = {
+        chain: "testnet",
+        serverUrl: "https://testnet.zec.rocks:443",
+        dataDir:
+          "~/Desktop/Projects/data-zingolib/.cache/zingolibData/recover/testnet",
+      }),
+    );
+    res.json(data);
   },
 );
 // router.get(
@@ -52,29 +106,34 @@ router.get(
 // );
 
 // List transactions (Admin)
-router.get(
-  "/addresses",
-  //  authenticate, isAdmin,
-  async (req, res) => {
-    // const addressesList = executeZingoCliAddresses("addresses");
-    // const addressesList = await getSapplingAddress();
-    // console.log("addy", addressesList);
-    try {
-      // const addresses = addressesList[0];
-      // const result = addresses.receivers;
-      res.json("result");
-    } catch {
-      res.json("None");
-    }
-  },
-);
+router.get("/addresses", authenticate, isAdmin, async (req, res) => {
+  const params = await getLatestZcashParams(req.user.id);
+  const addressesList = await executeZingoCliAddresses("addresses", params);
+  // const addressesList = await getSapplingAddress();
+  // console.log("addy", addressesList);
+  try {
+    const addresses = addressesList[0];
+    const result = addresses.encoded_address;
+    res.json(addresses);
+  } catch {
+    res.json("Error in the Address");
+  }
+});
 
 // List transactions (Admin)
 router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
   const dueBounties = await findDueBounties();
   const { paymentList, totalZecAmount } = await buildPaymentList(dueBounties);
-  // const sendResult = executeZingoQuickSend(paymentList);
-  const sendResult = [["None"]];
+  const sendResult = executeZingoQuickSend(
+    paymentList,
+    (params = {
+      chain: "testnet",
+      serverUrl: "https://testnet.zec.rocks:443",
+      dataDir:
+        "~/Desktop/Projects/data-zingolib/.cache/zingolibData/recover/testnet",
+    }),
+  );
+  // const sendResult = [["None"]];
 
   try {
     const result = sendResult[1];
@@ -552,6 +611,8 @@ router.get(
         createdAt: "desc",
       },
     });
+
+    console.log(req);
 
     // await prisma.transaction.update({
     //   where: { id: 256 }, // find the row to fix

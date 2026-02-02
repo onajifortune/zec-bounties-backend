@@ -1,12 +1,11 @@
 const { execSync } = require("child_process");
 const { existsSync } = require("fs");
 
-function executeZingoCli(command) {
-  const params = {};
-  const zingoPath = "~/zingolib/target/release/zingo-cli";
+function executeZingoCli(command, params) {
+  const zingoPath = "~/Desktop/Projects/zingolib/target/release/zingo-cli";
   const resolvedPath = zingoPath.replace(
     "~",
-    process.env.HOME || "/home/" + process.env.USER
+    process.env.HOME || "/Users/" + process.env.USER,
   );
 
   if (!existsSync(resolvedPath)) {
@@ -14,7 +13,8 @@ function executeZingoCli(command) {
   }
 
   const args = [
-    `--server ${params.server || "http://127.0.0.1:8137"}`,
+    `--chain ${params.chain || "mainnet"}`,
+    `--server ${params.serverUrl || "http://127.0.0.1:8137"}`,
     `--data-dir ${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}`,
     command,
   ].join(" ");
@@ -26,6 +26,8 @@ function executeZingoCli(command) {
     const rawOutput = execSync(`${resolvedPath} ${args}`, {
       stdio: "pipe",
     }).toString();
+
+    console.log(rawOutput);
 
     // 2️⃣ Strip ANSI color codes
     const noAnsi = rawOutput.replace(/\u001b\[[0-9;]*m/g, "");
@@ -48,7 +50,7 @@ function executeZingoCli(command) {
     return parsed;
   } catch (error) {
     throw new Error(
-      `Zingo CLI error: ${error.stderr?.toString() || error.message}`
+      `Zingo CLI error: ${error.stderr?.toString() || error.message}`,
     );
   }
 }

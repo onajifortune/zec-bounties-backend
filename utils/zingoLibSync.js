@@ -1,7 +1,7 @@
 const { execSync } = require("child_process");
 const { existsSync } = require("fs");
 
-async function executeZingoCliAddresses(command, params) {
+function executeZingoCliSync(command, params) {
   const zingoPath = "~/Desktop/Projects/zingolib/target/release/zingo-cli";
   const resolvedPath = zingoPath.replace(
     "~",
@@ -19,7 +19,7 @@ async function executeZingoCliAddresses(command, params) {
     command,
   ].join(" ");
 
-  console.log("here", args);
+  console.log(args);
 
   try {
     // 1️⃣ Run CLI and capture full output
@@ -27,12 +27,13 @@ async function executeZingoCliAddresses(command, params) {
       stdio: "pipe",
     }).toString();
 
+    console.log(rawOutput);
+
     // 2️⃣ Strip ANSI color codes
     const noAnsi = rawOutput.replace(/\u001b\[[0-9;]*m/g, "");
 
     // 3️⃣ Extract JSON blocks (any {…} including newlines)
-    // const jsonBlocks = noAnsi.match(/\{[\s\S]*?\}/g) || [];
-    const jsonBlocks = noAnsi.match(/(\{[\s\S]*?\}|\[[\s\S]*?\])/g) || [];
+    const jsonBlocks = noAnsi.match(/\{[\s\S]*?\}/g) || [];
 
     // 4️⃣ Parse each JSON block safely
     const parsed = jsonBlocks
@@ -44,7 +45,6 @@ async function executeZingoCliAddresses(command, params) {
         }
       })
       .filter(Boolean);
-    // console.log(parsed[1][0]);
     // 5️⃣ Return array if >1 objects, or object if just 1
     if (parsed.length === 1) return parsed[0];
     return parsed;
@@ -55,4 +55,4 @@ async function executeZingoCliAddresses(command, params) {
   }
 }
 
-module.exports = executeZingoCliAddresses;
+module.exports = executeZingoCliSync;

@@ -1,6 +1,6 @@
 datasource db {
   provider = "sqlite"
-  url      = "file:./devUNSAFE.db"
+  url      = "file:./dev.db"
 }
 
 generator client {
@@ -32,6 +32,7 @@ model User {
   bountyApplications   BountyApplication[] @relation("ApplicantUser")
   reviewedWork         WorkSubmission[]    @relation("ReviewedWork")
   submittedWork        WorkSubmission[]    @relation("SubmittedWork")
+  zcashParams          ZcashParams[]       @relation("UserZcashParams")
 }
 
 model Bounty {
@@ -41,7 +42,7 @@ model Bounty {
   bountyAmount      Float
   dateCreated       DateTime            @default(now())
   timeToComplete    DateTime
-  status            String              @default("To Do")
+  status            Status              @default(TO_DO)
   isApproved        Boolean             @default(false)
   isPaid            Boolean             @default(false)
   paymentAuthorized Boolean             @default(false)
@@ -100,6 +101,20 @@ model WorkSubmission {
   bounty         Bounty    @relation(fields: [bountyId], references: [id], onDelete: Cascade)
 
   @@map("work_submissions")
+}
+
+model ZcashParams {
+  id          Int      @id @default(autoincrement())
+  chain       String   @default("mainnet")
+  serverUrl   String   @default("https://zec.rocks:443")
+  accountName String
+  ownerId     String
+  owner       User     @relation("UserZcashParams", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([ownerId, accountName])
+  @@map("zcash_params")
 }
 
 enum UserRole {

@@ -1,15 +1,14 @@
 const { execSync } = require("child_process");
 const { existsSync } = require("fs");
 
-function executeZingoParseAddress(zaddress) {
+function executeZingoParseAddress(zaddress, params) {
   const command = "parse_address";
-  const params = {};
   if (!zaddress) throw new Error("No zaddress provided");
 
-  const zingoPath = "~/zingolib/target/release/zingo-cli";
+  const zingoPath = "~/Desktop/Projects/zingolib/target/release/zingo-cli";
   const resolvedPath = zingoPath.replace(
     "~",
-    process.env.HOME || "/home/" + process.env.USER
+    process.env.HOME || "/home/" + process.env.USER,
   );
 
   if (!existsSync(resolvedPath)) {
@@ -17,7 +16,8 @@ function executeZingoParseAddress(zaddress) {
   }
 
   const args = [
-    `--server ${params.server || "http://127.0.0.1:8137"}`,
+    `--chain ${params.chain || "mainnet"}`,
+    `--server ${params.serverUrl || "http://127.0.0.1:8137"}`,
     `--data-dir ${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}`,
     command,
     zaddress,
@@ -54,7 +54,7 @@ function executeZingoParseAddress(zaddress) {
     return parsed;
   } catch (error) {
     throw new Error(
-      `Zingo CLI error: ${error.stderr?.toString() || error.message}`
+      `Zingo CLI error: ${error.stderr?.toString() || error.message}`,
     );
   }
 }

@@ -20,5 +20,4 @@ prisma/migrations
 ./prisma/migrations
 /generated/prisma
 
-utils
 zingolib-wrapper

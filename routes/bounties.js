@@ -69,6 +69,8 @@ router.put("/:id", authenticate, isAdmin, async (req, res) => {
         ...(req.body.assignee !== undefined && { assignee: req.body.assignee }),
         ...(req.body.isApproved !== undefined && {
           isApproved: req.body.isApproved,
+          // If approved is true, set status to IN_PROGRESS; if false, set to CANCELLED
+          status: req.body.isApproved === true ? "IN_PROGRESS" : "CANCELLED",
         }),
       },
     });
@@ -808,7 +810,7 @@ router.put(
             where: { id: application.bountyId },
             data: {
               assignee: application.applicantId,
-              status: "In Progress",
+              status: "IN_PROGRESS",
             },
           });
 
@@ -819,7 +821,7 @@ router.put(
               id: { not: applicationId },
             },
             data: {
-              status: "rejected",
+              status: "CANCELLED",
               reviewedAt: new Date(),
               reviewedBy: userId,
             },
@@ -828,6 +830,7 @@ router.put(
 
         return updatedApplication;
       });
+      sendRealtimeUpdate("application_updated", result, userId);
 
       res.json(result);
     } catch (err) {
@@ -869,6 +872,11 @@ router.delete(
       await prisma.bountyApplication.delete({
         where: { id: applicationId },
       });
+      sendRealtimeUpdate(
+        "application_deleted",
+        { id: applicationId, bountyId: application.bountyId },
+        userId,
+      );
 
       res.json({ message: "Application withdrawn successfully" });
     } catch (err) {
@@ -937,6 +945,7 @@ router.post("/apply", authenticate, async (req, res) => {
         },
       },
     });
+    sendRealtimeUpdate("application_created", application, applicantId);
 
     res.status(201).json(application);
   } catch (err) {

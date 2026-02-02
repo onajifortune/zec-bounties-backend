@@ -4,7 +4,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { PrismaClient } = require("@prisma/client");
 const { authenticate, isAdmin } = require("../middleware/auth");
-// const { verifyZaddress } = require("../helpers/db-query.js");
+const { verifyZaddress } = require("../helpers/db-query.js");
 // const { isSaplingZcashAddress } = require("../utils/zingolib/parseAddresses");
 
 const prisma = new PrismaClient();
@@ -107,7 +107,7 @@ router.post("/login", async (req, res) => {
     },
   });
   if (!userPrime) return res.status(401).send("Invalid credentials");
-  const match = await bcrypt.compare(password, userPrime.password);
+  const match = bcrypt.compare(password, userPrime.password);
   if (!match) return res.status(401).send("Invalid credentials");
   const token = jwt.sign({ id: userPrime.id, role: userPrime.role }, SECRET, {
     expiresIn: "1d",
@@ -273,9 +273,17 @@ router.post(
       const { z_address } = req.body;
 
       // Await if verifyZaddress is async
-      // const result = verifyZaddress(z_address);
+      const result = verifyZaddress(
+        z_address,
+        (params = {
+          chain: "testnet",
+          serverUrl: "https://testnet.zec.rocks:443",
+          dataDir:
+            "~/Desktop/Projects/data-zingolib/.cache/zingolibData/recover/testnet",
+        }),
+      );
       // const result = await isSaplingZcashAddress(z_address);
-      const result = true;
+      // const result = true;
       console.log("Verification result:", result);
 
       return res.json({ isVerified: result });

@@ -1,5 +1,5 @@
 const { PrismaClient } = require("@prisma/client");
-// const executeZingoParseAddres = require("../utils/zingoLibParseAddress.js");
+const executeZingoParseAddres = require("../utils/zingoLibParseAddress.js");
 
 const prisma = new PrismaClient();
 
@@ -103,23 +103,24 @@ async function storeTransactions(txHashes, totalAmount) {
   return transactions;
 }
 
-function verifyZaddress(z_address) {
-  // const state = executeZingoParseAddres(z_address);
-  // try {
-  //   const result = state[1] || state;
-  //   if (
-  //     result.status === "success" &&
-  //     result.chain_name === "main" &&
-  //     result.address_kind === "sapling"
-  //   ) {
-  //     return true;
-  //   } else {
-  //     return false;
-  //   }
-  // } catch {
-  //   return null;
-  // }
-  return true;
+function verifyZaddress(z_address, params) {
+  const state = executeZingoParseAddres(z_address, params);
+  try {
+    const result = state[1] || state;
+    if (
+      result.status === "success" &&
+      result.chain_name + "net" === params.chain
+      // &&
+      // result.address_kind === "sapling"
+    ) {
+      return true;
+    } else {
+      return false;
+    }
+  } catch {
+    return null;
+  }
+  // return true;
 }
 
 module.exports = {

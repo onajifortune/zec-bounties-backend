@@ -1,11 +1,38 @@
 const { execSync } = require("child_process");
 const { existsSync } = require("fs");
 
-function executeZingoCheckBalance(command, params) {
-  const zingoPath = "~/zingolib/target/release/zingo-cli";
+function parseZingoBalance(output) {
+  const lines = output
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l &&
+        !l.startsWith("Launching") &&
+        !l.startsWith("Save") &&
+        !l.startsWith("Zingo") &&
+        l !== "[" &&
+        l !== "]",
+    );
+
+  const result = {};
+
+  for (const line of lines) {
+    const [key, value] = line.split(":").map((s) => s.trim());
+    if (!key || !value) continue;
+
+    // Remove numeric underscores: 190_000 → 190000
+    result[key] = Number(value.replace(/_/g, ""));
+  }
+
+  return result;
+}
+
+async function executeZingoCheckBalance(command, params) {
+  const zingoPath = "~/Desktop/Projects/zingolib/target/release/zingo-cli";
   const resolvedPath = zingoPath.replace(
     "~",
-    process.env.HOME || "/home/" + process.env.USER
+    process.env.HOME || "/Users/" + process.env.USER,
   );
 
   if (!existsSync(resolvedPath)) {
@@ -13,7 +40,8 @@ function executeZingoCheckBalance(command, params) {
   }
 
   const args = [
-    `--server ${params.server || "http://127.0.0.1:8137"}`,
+    `--chain ${params.chain || "mainnet"}`,
+    `--server ${params.serverUrl || "http://127.0.0.1:8137"}`,
     `--data-dir ${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}`,
     command,
   ].join(" ");
@@ -24,29 +52,14 @@ function executeZingoCheckBalance(command, params) {
       stdio: "pipe",
     }).toString();
 
-    // 1️⃣ Remove ANSI color codes
-    const noAnsi = rawOutput.replace(/\u001b\[[0-9;]*m/g, "");
+    console.log(rawOutput);
 
-    // 2️⃣ Extract JSON blocks using regex (matches anything starting with `{` and ending with `}`)
-    const jsonBlocks = noAnsi.match(/\{[\s\S]*?\}/g) || [];
+    const parsed = parseZingoBalance(rawOutput);
 
-    // 3️⃣ Parse each JSON block
-    const parsed = jsonBlocks
-      .map((block) => {
-        try {
-          return JSON.parse(block);
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean); // remove failed parses
-
-    // 4️⃣ If only one JSON object, return it directly. Otherwise return array.
-    if (parsed.length === 1) return parsed[0];
     return parsed;
   } catch (error) {
     throw new Error(
-      `Zingo CLI error: ${error.stderr?.toString() || error.message}`
+      `Zingo CLI error: ${error.stderr?.toString() || error.message}`,
     );
   }
 }
