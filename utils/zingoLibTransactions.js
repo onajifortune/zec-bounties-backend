@@ -101,7 +101,7 @@ function parseZingoBlock(block) {
   return root;
 }
 
-function executeZingoCli(command, params) {
+async function executeZingoCliTransactions(command, params) {
   const zingoPath = "~/Desktop/Projects/zingolib/target/release/zingo-cli";
   const resolvedPath = zingoPath.replace(
     "~",
@@ -139,4 +139,4 @@ function executeZingoCli(command, params) {
   }
 }
 
-module.exports = executeZingoCli;
+module.exports = executeZingoCliTransactions;

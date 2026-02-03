@@ -1,7 +1,7 @@
 const { execSync } = require("child_process");
 const { existsSync } = require("fs");
 
-function executeZingoQuickSend(recipients, params) {
+async function executeZingoQuickSend(recipients, params) {
   const command = "quicksend";
 
   const zingoPath = "~/Desktop/Projects/zingolib/target/release/zingo-cli";

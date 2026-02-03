@@ -1,12 +1,12 @@
 const { execSync } = require("child_process");
 const { existsSync } = require("fs");
 
-function executeZingoSend(params) {
+async function executeZingoSend(params) {
   const command = "quicksend";
   const zingoPath = "~/zingolib/target/release/zingo-cli";
   const resolvedPath = zingoPath.replace(
     "~",
-    process.env.HOME || "/home/" + process.env.USER
+    process.env.HOME || "/home/" + process.env.USER,
   );
 
   if (!existsSync(resolvedPath)) {
@@ -53,7 +53,7 @@ function executeZingoSend(params) {
     return parsed;
   } catch (error) {
     throw new Error(
-      `Zingo CLI error: ${error.stderr?.toString() || error.message}`
+      `Zingo CLI error: ${error.stderr?.toString() || error.message}`,
     );
   }
 }

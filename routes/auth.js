@@ -5,6 +5,7 @@ const jwt = require("jsonwebtoken");
 const { PrismaClient } = require("@prisma/client");
 const { authenticate, isAdmin } = require("../middleware/auth");
 const { verifyZaddress } = require("../helpers/db-query.js");
+const { getLatestZcashParams } = require("../helpers/zcash/zcashHelper.js");
 // const { isSaplingZcashAddress } = require("../utils/zingolib/parseAddresses");
 
 const prisma = new PrismaClient();
@@ -265,34 +266,23 @@ router.get("/me", async (req, res) => {
   }
 });
 
-router.post(
-  "/verify-zaddress",
-  // authenticate,
-  async (req, res) => {
-    try {
-      const { z_address } = req.body;
+router.post("/verify-zaddress", authenticate, async (req, res) => {
+  try {
+    const { z_address } = req.body;
 
-      // Await if verifyZaddress is async
-      const result = verifyZaddress(
-        z_address,
-        (params = {
-          chain: "testnet",
-          serverUrl: "https://testnet.zec.rocks:443",
-          dataDir:
-            "~/Desktop/Projects/data-zingolib/.cache/zingolibData/recover/testnet",
-        }),
-      );
-      // const result = await isSaplingZcashAddress(z_address);
-      // const result = true;
-      console.log("Verification result:", result);
+    // Await if verifyZaddress is async
+    const params = await getLatestZcashParams(req.user.id);
+    const result = await verifyZaddress(z_address, params);
+    // const result = await isSaplingZcashAddress(z_address);
+    // const result = true;
+    console.log("Verification result:", result);
 
-      return res.json({ isVerified: result });
-    } catch (err) {
-      console.error("Error verifying Z-address:", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+    return res.json({ isVerified: result });
+  } catch (err) {
+    console.error("Error verifying Z-address:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 router.patch("/update-zaddress", authenticate, async (req, res) => {
   const { z_address } = req.body;

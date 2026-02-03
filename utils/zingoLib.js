@@ -1,7 +1,7 @@
 const { execSync } = require("child_process");
 const { existsSync } = require("fs");
 
-function executeZingoCli(command, params) {
+async function executeZingoCli(command, params) {
   const zingoPath = "~/Desktop/Projects/zingolib/target/release/zingo-cli";
   const resolvedPath = zingoPath.replace(
     "~",

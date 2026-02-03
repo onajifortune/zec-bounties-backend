@@ -20,4 +20,5 @@ prisma/migrations
 ./prisma/migrations
 /generated/prisma
 
+wallets
 zingolib-wrapper

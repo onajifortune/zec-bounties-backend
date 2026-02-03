@@ -1,24 +1,40 @@
 const { PrismaClient } = require("@prisma/client");
+const path = require("path");
 const prisma = new PrismaClient();
 
 /**
- * Fetch latest Zcash params for a given user
- * @param {string} ownerId - The current user's ID
- * @returns {Promise<{ serverUrl: string, chain: string } | null>}
+ * Fetch latest Zcash params for a given user.
+ * Returns null if the user has no params yet (caller should run initZcashOnce).
+ *
+ * @param {string} ownerId
+ * @returns {Promise<{ serverUrl: string, chain: string, accountName: string, dataDir: string } | null>}
  */
 async function getLatestZcashParams(ownerId) {
   if (!ownerId) throw new Error("ownerId is required");
 
   const params = await prisma.zcashParams.findFirst({
     where: { ownerId },
-    orderBy: { createdAt: "desc" }, // latest one first
-    select: { serverUrl: true, chain: true }, // only what we need
+    orderBy: { createdAt: "desc" },
+    select: {
+      serverUrl: true,
+      chain: true, // needed for dataDir path AND for route logic
+      accountName: true,
+    },
   });
 
-  if (!params) return null; // user has no Zcash params yet
-  params.dataDir = `~/Desktop/Projects/data-zingolib/.cache/zingolibData/recover/${params.chain}`;
+  if (!params) return null;
 
-  return params; // { serverUrl, chain }
+  // Path structure: wallets/{ownerId}/{accountName}/{chain}
+  // This must match the path used in initZcashOnce.
+  params.dataDir = path.join(
+    process.cwd(),
+    "wallets",
+    ownerId,
+    params.accountName,
+    params.chain,
+  );
+
+  return params; // { serverUrl, chain, accountName, dataDir }
 }
 
 module.exports = { getLatestZcashParams };

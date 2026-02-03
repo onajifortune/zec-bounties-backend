@@ -103,13 +103,15 @@ async function storeTransactions(txHashes, totalAmount) {
   return transactions;
 }
 
-function verifyZaddress(z_address, params) {
-  const state = executeZingoParseAddres(z_address, params);
+async function verifyZaddress(z_address, params) {
+  const state = await executeZingoParseAddres(z_address, params);
+
+  console.log(state);
   try {
     const result = state[1] || state;
     if (
       result.status === "success" &&
-      result.chain_name + "net" === params.chain
+      result.chain_name + "net" === "testnet"
       // &&
       // result.address_kind === "sapling"
     ) {

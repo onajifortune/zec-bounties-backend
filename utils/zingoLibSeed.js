@@ -1,14 +1,11 @@
 const { execSync } = require("child_process");
 const { existsSync } = require("fs");
 
-async function executeZingoParseAddress(zaddress, params) {
-  const command = "parse_address";
-  if (!zaddress) throw new Error("No zaddress provided");
-
+async function executeZingoCliSeed(params, seed, birthday) {
   const zingoPath = "~/Desktop/Projects/zingolib/target/release/zingo-cli";
   const resolvedPath = zingoPath.replace(
     "~",
-    process.env.HOME || "/home/" + process.env.USER,
+    process.env.HOME || "/Users/" + process.env.USER,
   );
 
   if (!existsSync(resolvedPath)) {
@@ -16,11 +13,11 @@ async function executeZingoParseAddress(zaddress, params) {
   }
 
   const args = [
-    `--chain ${"testnet"}`,
-    `--server ${" https://testnet.zec.rocks:443 "}`,
-    `--data-dir ${"/Users/sntjq/Desktop/Projects/zec-bounties/bounty-backend/wallets/cmhyplsud0002sbg4q2po7uh1/Test1/testnet"}`,
-    command,
-    zaddress,
+    `--chain ${params.chain || "mainnet"}`,
+    `--server ${params.serverUrl || "http://127.0.0.1:8137"}`,
+    `--data-dir ${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}`,
+    `--seed "${seed}"`,
+    `--birthday ${birthday || 0}`,
   ].join(" ");
 
   console.log(args);
@@ -30,6 +27,8 @@ async function executeZingoParseAddress(zaddress, params) {
     const rawOutput = execSync(`${resolvedPath} ${args}`, {
       stdio: "pipe",
     }).toString();
+
+    console.log(rawOutput);
 
     // 2️⃣ Strip ANSI color codes
     const noAnsi = rawOutput.replace(/\u001b\[[0-9;]*m/g, "");
@@ -47,9 +46,7 @@ async function executeZingoParseAddress(zaddress, params) {
         }
       })
       .filter(Boolean);
-
     // 5️⃣ Return array if >1 objects, or object if just 1
-    console.log("resultz", parsed);
     if (parsed.length === 1) return parsed[0];
     return parsed;
   } catch (error) {
@@ -59,4 +56,4 @@ async function executeZingoParseAddress(zaddress, params) {
   }
 }
 
-module.exports = executeZingoParseAddress;
+module.exports = executeZingoCliSeed;
