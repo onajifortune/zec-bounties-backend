@@ -59,23 +59,6 @@ router.get("/balance", authenticate, isAdmin, async (req, res) => {
   res.json(balance);
 });
 
-router.get("/test", async (req, res) => {
-  const data = await executeZingoCliSync(
-    "sync status",
-    (params = {
-      chain: "testnet",
-      serverUrl: "https://testnet.zec.rocks:443",
-      dataDir:
-        "~/Desktop/Projects/data-zingolib/.cache/zingolibData/recover/testnet",
-    }),
-  );
-
-  // ✅ Broadcast sync status
-  sendRealtimeUpdate("sync_status_checked", { syncStatus: data });
-
-  res.json(data);
-});
-
 router.post("/accounts", authenticate, async (req, res) => {
   const { accountName } = req.body;
 
