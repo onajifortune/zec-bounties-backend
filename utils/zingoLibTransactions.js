@@ -102,13 +102,9 @@ function parseZingoBlock(block) {
 }
 
 async function executeZingoCliTransactions(command, params) {
-  const zingoPath = "~/Desktop/Projects/zingolib/target/release/zingo-cli";
-  const resolvedPath = zingoPath.replace(
-    "~",
-    process.env.HOME || "/Users/" + process.env.USER,
-  );
+  const zingoPath = process.env.ZINGO_CLI;
 
-  if (!existsSync(resolvedPath)) {
+  if (!existsSync(zingoPath)) {
     throw new Error(`zingo-cli not found at ${resolvedPath}`);
   }
 

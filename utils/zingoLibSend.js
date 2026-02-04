@@ -3,13 +3,9 @@ const { existsSync } = require("fs");
 
 async function executeZingoSend(params) {
   const command = "quicksend";
-  const zingoPath = "~/zingolib/target/release/zingo-cli";
-  const resolvedPath = zingoPath.replace(
-    "~",
-    process.env.HOME || "/home/" + process.env.USER,
-  );
+  const zingoPath = process.env.ZINGO_CLI;
 
-  if (!existsSync(resolvedPath)) {
+  if (!existsSync(zingoPath)) {
     throw new Error(`zingo-cli not found at ${resolvedPath}`);
   }
 

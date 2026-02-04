@@ -21,14 +21,10 @@ function extractJson(text) {
 
 class ZingoProcess {
   constructor(params = {}) {
-    const zingoPath = "~/Desktop/Projects/zingolib/target/release/zingo-cli";
-    this.resolvedPath = zingoPath.replace(
-      "~",
-      process.env.HOME || "/Users/" + process.env.USER,
-    );
+    this.zingoPath = process.env.ZINGO_CLI;
 
-    if (!existsSync(this.resolvedPath)) {
-      throw new Error(`zingo-cli not found at ${this.resolvedPath}`);
+    if (!existsSync(this.zingoPath)) {
+      throw new Error(`zingo-cli not found at ${this.zingoPath}`);
     }
 
     const args = [
@@ -40,7 +36,7 @@ class ZingoProcess {
       params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino",
     ];
 
-    this.proc = spawn(this.resolvedPath, args, {
+    this.proc = spawn(this.zingoPath, args, {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
