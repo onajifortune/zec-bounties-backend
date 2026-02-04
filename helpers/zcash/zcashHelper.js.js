@@ -47,27 +47,18 @@ async function getLatestZcashParams(ownerId) {
  * @param {Object} context - Authentication context (e.g., req.user, session, etc.)
  * @returns {Promise<{ serverUrl: string, chain: string, accountName: string } | null>}
  */
-async function getLatestZcashParamsForClient(context) {
-  // Extract ownerId from authentication context
-  // Adjust this based on your auth implementation (e.g., context.user.id, context.userId, etc.)
-  const ownerId = context?.user?.id || context?.userId;
-
-  if (!ownerId) {
-    throw new Error("User not authenticated");
-  }
-
+async function getLatestZcashParamsForClient() {
   const params = await prisma.zcashParams.findFirst({
-    where: { ownerId },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "desc" }, // get the most recently created entry
     select: {
       serverUrl: true,
       chain: true,
       accountName: true,
-      // dataDir is NOT included - it's server-side only and constructed on demand
+      // dataDir is still omitted as it's server-side only
     },
   });
 
-  return params; // { serverUrl, chain, accountName } or null
+  return params; // { serverUrl, chain, accountName } or null if table is empty
 }
 
 module.exports = { getLatestZcashParams, getLatestZcashParamsForClient };
