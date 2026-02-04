@@ -276,7 +276,7 @@ router.post("/verify-zaddress", authenticate, async (req, res) => {
     // Get params based on user role
     let params;
     if (req.user.role === "CLIENT") {
-      params = await getLatestZcashParamsForClient(req);
+      params = await getLatestZcashParamsForClient();
     } else {
       params = await getLatestZcashParams(req.user.id);
     }
