@@ -54,9 +54,17 @@ async function getLatestZcashParamsForClient() {
       serverUrl: true,
       chain: true,
       accountName: true,
+      ownerId: true,
       // dataDir is still omitted as it's server-side only
     },
   });
+  params.dataDir = path.join(
+    process.cwd(),
+    "wallets",
+    ownerId,
+    params.accountName,
+    params.chain,
+  );
 
   return params; // { serverUrl, chain, accountName } or null if table is empty
 }
