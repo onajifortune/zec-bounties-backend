@@ -101,11 +101,6 @@ router.get("/addresses", authenticate, isAdmin, async (req, res) => {
   const status = await executeZingoCliSync("sync status", params);
   console.log("status", status);
 
-  if (status.percentage_total_outputs_scanned === 100) {
-    await executeZingoCliSync("sync stop", params);
-    await executeZingoCliSync("sync run", params);
-  }
-
   const addressesList = await executeZingoCliAddresses("addresses", params);
 
   try {
