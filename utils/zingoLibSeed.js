@@ -5,7 +5,7 @@ async function executeZingoCliSeed(params, seed, birthday) {
   const zingoPath = process.env.ZINGO_CLI;
 
   if (!existsSync(zingoPath)) {
-    throw new Error(`zingo-cli not found at ${resolvedPath}`);
+    throw new Error(`zingo-cli not found at ${zingoPath}`);
   }
 
   const args = [
@@ -20,7 +20,7 @@ async function executeZingoCliSeed(params, seed, birthday) {
 
   try {
     // 1️⃣ Run CLI and capture full output
-    const rawOutput = execSync(`${resolvedPath} ${args}`, {
+    const rawOutput = execSync(`${zingoPath} ${args}`, {
       stdio: "pipe",
     }).toString();
 

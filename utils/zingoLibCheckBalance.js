@@ -32,7 +32,7 @@ async function executeZingoCheckBalance(command, params) {
   const zingoPath = process.env.ZINGO_CLI;
 
   if (!existsSync(zingoPath)) {
-    throw new Error(`zingo-cli not found at ${resolvedPath}`);
+    throw new Error(`zingo-cli not found at ${zingoPath}`);
   }
 
   const args = [
@@ -44,7 +44,7 @@ async function executeZingoCheckBalance(command, params) {
 
   try {
     // Run CLI and capture output
-    const rawOutput = execSync(`${resolvedPath} ${args}`, {
+    const rawOutput = execSync(`${zingoPath} ${args}`, {
       stdio: "pipe",
     }).toString();
 

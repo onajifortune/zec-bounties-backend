@@ -6,7 +6,7 @@ async function executeZingoSend(params) {
   const zingoPath = process.env.ZINGO_CLI;
 
   if (!existsSync(zingoPath)) {
-    throw new Error(`zingo-cli not found at ${resolvedPath}`);
+    throw new Error(`zingo-cli not found at ${zingoPath}`);
   }
 
   // Convert to zatoshis
@@ -23,7 +23,7 @@ async function executeZingoSend(params) {
 
   try {
     // 1️⃣ Run CLI and capture full output
-    const rawOutput = execSync(`${resolvedPath} ${args}`, {
+    const rawOutput = execSync(`${zingoPath} ${args}`, {
       stdio: "pipe",
     }).toString();
 
