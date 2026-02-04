@@ -61,7 +61,7 @@ async function getLatestZcashParamsForClient() {
   params.dataDir = path.join(
     process.cwd(),
     "wallets",
-    ownerId,
+    params.ownerId,
     params.accountName,
     params.chain,
   );
