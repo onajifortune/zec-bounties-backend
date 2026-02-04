@@ -12,9 +12,9 @@ async function executeZingoParseAddress(zaddress, params) {
   }
 
   const args = [
-    `--chain ${"testnet"}`,
-    `--server ${" https://testnet.zec.rocks:443 "}`,
-    `--data-dir ${"/Users/sntjq/Desktop/Projects/zec-bounties/bounty-backend/wallets/cmhyplsud0002sbg4q2po7uh1/Test1/testnet"}`,
+    `--chain ${params.chain || "testnet"}`,
+    `--server ${params.serverUrl || "https://testnet.zec.rocks:443"}`,
+    `--data-dir ${params.dataDir || "/error"}`,
     command,
     zaddress,
   ].join(" ");
