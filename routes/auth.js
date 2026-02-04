@@ -5,7 +5,10 @@ const jwt = require("jsonwebtoken");
 const { PrismaClient } = require("@prisma/client");
 const { authenticate, isAdmin } = require("../middleware/auth");
 const { verifyZaddress } = require("../helpers/db-query.js");
-const { getLatestZcashParams } = require("../helpers/zcash/zcashHelper.js");
+const {
+  getLatestZcashParams,
+  getLatestZcashParamsForClient,
+} = require("../helpers/zcash/zcashHelper.js");
 // const { isSaplingZcashAddress } = require("../utils/zingolib/parseAddresses");
 
 const prisma = new PrismaClient();
@@ -270,11 +273,21 @@ router.post("/verify-zaddress", authenticate, async (req, res) => {
   try {
     const { z_address } = req.body;
 
-    // Await if verifyZaddress is async
-    const params = await getLatestZcashParams(req.user.id);
+    // Get params based on user role
+    let params;
+    if (req.user.role === "CLIENT") {
+      params = await getLatestZcashParamsForClient(req);
+    } else {
+      params = await getLatestZcashParams(req.user.id);
+    }
+
+    if (!params) {
+      return res.status(404).json({
+        error: "No Zcash params found. Initialize wallet first.",
+      });
+    }
+
     const result = await verifyZaddress(z_address, params);
-    // const result = await isSaplingZcashAddress(z_address);
-    // const result = true;
     console.log("Verification result:", result);
 
     return res.json({ isVerified: result });
