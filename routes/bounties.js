@@ -49,7 +49,11 @@ router.post("/", authenticate, async (req, res) => {
 
 // List all bounties
 router.get("/", authenticate, async (req, res) => {
-  const bounties = await prisma.bounty.findMany();
+  const bounties = await prisma.bounty.findMany({
+    orderBy: {
+      dateCreated: "desc",
+    },
+  });
   res.json(bounties);
 });
 

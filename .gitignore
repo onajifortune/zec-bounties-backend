@@ -22,3 +22,5 @@ prisma/migrations
 
 wallets
 zingolib-wrapper
+
+.DS_Store

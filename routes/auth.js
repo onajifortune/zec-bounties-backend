@@ -297,6 +297,28 @@ router.post("/verify-zaddress", authenticate, async (req, res) => {
   }
 });
 
+// Add this to your auth routes file
+
+// Check if user has Zcash params set up
+router.get("/has-zcash-params", authenticate, async (req, res) => {
+  try {
+    let params;
+    if (req.user.role === "CLIENT") {
+      params = await getLatestZcashParamsForClient();
+    } else {
+      params = await getLatestZcashParams(req.user.id);
+    }
+
+    return res.json({
+      hasParams: !!params,
+      message: params ? "Zcash params found" : "No Zcash params found",
+    });
+  } catch (err) {
+    console.error("Error checking Zcash params:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 router.patch("/update-zaddress", authenticate, async (req, res) => {
   const { z_address } = req.body;
 
