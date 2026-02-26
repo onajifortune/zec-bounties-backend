@@ -14,7 +14,9 @@ const app = express();
 const server = createServer(app);
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
-app.use(cors({ origin: FRONTEND_URL, credentials: true }));
+const allowedOrigins = [FRONTEND_URL, "https://bounties.zechub.wiki"];
+
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 
 app.get("/", (req, res) => {
