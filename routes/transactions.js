@@ -22,7 +22,7 @@ const executeZingoCliSync = require("../utils/zingoLibSync.js");
 const { resolvePayingWallet } = require("../helpers/zcash/resolvePayingWallet");
 const { buildPaymentListGrouped } = require("../helpers/db-query");
 
-const { sendRealtimeUpdate } = require("../middleware/websocket");
+const { sendRealtimeUpdate, sendToUser } = require("../middleware/websocket");
 
 // List transactions (Admin)
 router.get("/", authenticate, isAdmin, async (req, res) => {
@@ -30,12 +30,8 @@ router.get("/", authenticate, isAdmin, async (req, res) => {
   console.log(params);
   const txs = await executeZingoCliTransactions("transactions", params);
 
-  // ✅ Broadcast transactions fetched
-  sendRealtimeUpdate(
-    "transactions_fetched",
-    { transactions: txs },
-    req.user.id,
-  );
+  // ✅ Send transactions only to the requesting admin
+  sendToUser(req.user.id, "transactions_fetched", { transactions: txs });
 
   res.json(txs);
 });
@@ -55,8 +51,8 @@ router.get("/balance", authenticate, isAdmin, async (req, res) => {
     balance = data.confirmed_sapling_balance;
   }
 
-  // ✅ Broadcast balance fetched
-  sendRealtimeUpdate("balance_fetched", { balance }, req.user.id);
+  // ✅ Send balance only to the requesting admin (not broadcast)
+  sendToUser(req.user.id, "balance_fetched", { balance });
 
   res.json(balance);
 });
@@ -71,8 +67,8 @@ router.post("/accounts", authenticate, async (req, res) => {
   try {
     const params = await initZcashOnce(req.user.id, accountName);
 
-    // ✅ Broadcast account created
-    sendRealtimeUpdate("account_created", { accountName, params }, req.user.id);
+    // ✅ Send account created only to the requesting user
+    sendToUser(req.user.id, "account_created", { accountName, params });
 
     res.json({ message: `Account "${accountName}" initialized`, params });
   } catch (err) {
@@ -80,7 +76,7 @@ router.post("/accounts", authenticate, async (req, res) => {
   }
 });
 
-// List transactions (Admin)
+// List addresses (Admin)
 router.get("/addresses", authenticate, isAdmin, async (req, res) => {
   const params = await getLatestZcashParams(req.user.id);
   const status = await executeZingoCliSync("sync status", params);
@@ -92,39 +88,14 @@ router.get("/addresses", authenticate, isAdmin, async (req, res) => {
     const addresses = addressesList[0];
     const result = addresses.encoded_address;
 
-    // ✅ Broadcast addresses fetched
-    sendRealtimeUpdate("addresses_fetched", { addresses }, req.user.id);
+    // ✅ Send addresses only to the requesting admin (not broadcast)
+    sendToUser(req.user.id, "addresses_fetched", { addresses });
 
     res.json(addresses);
   } catch {
     res.json("Error in the Address");
   }
 });
-
-// List transactions (Admin)
-// router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
-//   const dueBounties = await findDueBounties();
-//   const { paymentList, totalZecAmount } = await buildPaymentList(dueBounties);
-//   const params = await getLatestZcashParams(req.user.id);
-//   console.log(params);
-//   const sendResult = await executeZingoQuickSend(paymentList, params);
-
-//   const result = sendResult[1];
-//   await updateDueBounties();
-
-//   // ✅ Broadcast payment authorized
-//   sendRealtimeUpdate(
-//     "payment_authorized",
-//     {
-//       result,
-//       totalZecAmount,
-//       bountyCount: dueBounties.length,
-//     },
-//     req.user.id,
-//   );
-
-//   res.json(result);
-// });
 
 router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
   try {
@@ -228,6 +199,7 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
       paymentList.reduce((sum, p) => sum + p.amount, 0),
     );
 
+    // ✅ Broadcast payment result to ALL admins (this is a shared event)
     sendRealtimeUpdate(
       "payment_authorized",
       {
@@ -237,7 +209,7 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
         skipped,
         walletAccountName: adminWallet.accountName,
       },
-      req.user.id,
+      req.user.id, // exclude sender since they get the HTTP response
     );
 
     res.json({
@@ -337,7 +309,7 @@ router.post(
           : null,
       };
 
-      // ✅ Broadcast payment authorized for specific bounty
+      // ✅ Broadcast bounty payment authorization to ALL (shared bounty state)
       sendRealtimeUpdate(
         "bounty_payment_authorized",
         responseData,
@@ -437,7 +409,7 @@ router.put(
           : null,
       };
 
-      // ✅ Broadcast payment authorized for specific bounty
+      // ✅ Broadcast bounty payment authorization to ALL (shared bounty state)
       sendRealtimeUpdate(
         "bounty_payment_authorized",
         responseData,
@@ -515,7 +487,7 @@ router.post(
         zcashPayload: payments,
       };
 
-      // ✅ Broadcast batch payment processed
+      // ✅ Broadcast batch payment result to ALL admins (shared event)
       sendRealtimeUpdate("batch_payment_processed", result, req.user.id);
 
       res.json(result);
@@ -576,7 +548,7 @@ router.post(
         bountyId,
       };
 
-      // ✅ Broadcast instant payment processed
+      // ✅ Broadcast instant payment result to ALL admins (shared event)
       sendRealtimeUpdate("instant_payment_processed", result, req.user.id);
 
       res.json(result);
@@ -634,7 +606,7 @@ router.put("/:id/mark-paid", authenticate, isAdmin, async (req, res) => {
       },
     });
 
-    // ✅ Broadcast bounty marked as paid
+    // ✅ Broadcast bounty paid status to ALL (shared bounty state)
     sendRealtimeUpdate("bounty_marked_paid", updatedBounty, req.user.id);
 
     res.json(updatedBounty);
@@ -691,7 +663,7 @@ router.post("/pay/:bountyId", authenticate, isAdmin, async (req, res) => {
       },
     });
 
-    // ✅ Broadcast bounty paid
+    // ✅ Broadcast bounty paid to ALL admins (shared event)
     sendRealtimeUpdate(
       "bounty_paid",
       {

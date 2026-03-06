@@ -12,7 +12,7 @@ function broadcast(data, excludeWs) {
   });
 }
 
-// NEW: Get WebSocket connection by userId
+// Get WebSocket connection by userId
 function getClientByUserId(userId) {
   for (const client of clients) {
     if (client.userId === userId) {
@@ -20,6 +20,14 @@ function getClientByUserId(userId) {
     }
   }
   return null;
+}
+
+// Send a message to a specific user only (no broadcast)
+function sendToUser(userId, type, payload) {
+  const ws = getClientByUserId(userId);
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type, payload }));
+  }
 }
 
 function handleWebSocket(ws, prisma) {
@@ -36,7 +44,7 @@ function handleWebSocket(ws, prisma) {
               JSON.stringify({
                 type: "error",
                 content: "userId is required",
-              })
+              }),
             );
             break;
           }
@@ -51,7 +59,7 @@ function handleWebSocket(ws, prisma) {
               JSON.stringify({
                 type: "error",
                 content: "User not found",
-              })
+              }),
             );
             break;
           }
@@ -69,7 +77,7 @@ function handleWebSocket(ws, prisma) {
             JSON.stringify({
               type: "joined",
               content: `Welcome, ${user.name}!`,
-            })
+            }),
           );
 
           // Broadcast to others that user joined
@@ -78,11 +86,11 @@ function handleWebSocket(ws, prisma) {
               type: "system",
               content: `${user.name} joined the chat`,
             },
-            ws
+            ws,
           );
 
           console.log(
-            `User ${user.name} connected. Total clients: ${clients.size}`
+            `User ${user.name} connected. Total clients: ${clients.size}`,
           );
           break;
 
@@ -92,7 +100,7 @@ function handleWebSocket(ws, prisma) {
               JSON.stringify({
                 type: "error",
                 content: "Invalid message format or not joined",
-              })
+              }),
             );
             break;
           }
@@ -129,7 +137,7 @@ function handleWebSocket(ws, prisma) {
         JSON.stringify({
           type: "error",
           content: "Server error",
-        })
+        }),
       );
     }
   });
@@ -138,7 +146,7 @@ function handleWebSocket(ws, prisma) {
     if (currentClient) {
       clients.delete(currentClient);
       console.log(
-        `User ${currentClient.userName} disconnected. Total clients: ${clients.size}`
+        `User ${currentClient.userName} disconnected. Total clients: ${clients.size}`,
       );
 
       // Broadcast to others that user left
@@ -159,10 +167,15 @@ function handleWebSocket(ws, prisma) {
   });
 }
 
-// UPDATED: Accept optional excludeUserId parameter
+// Broadcast to all clients except the sender (for shared events like new bounties)
 function sendRealtimeUpdate(type, payload, excludeUserId = null) {
   const excludeWs = excludeUserId ? getClientByUserId(excludeUserId) : null;
   broadcast({ type, payload }, excludeWs);
 }
 
-module.exports = { handleWebSocket, sendRealtimeUpdate, getClientByUserId };
+module.exports = {
+  handleWebSocket,
+  sendRealtimeUpdate,
+  sendToUser,
+  getClientByUserId,
+};
