@@ -23,6 +23,7 @@ const { resolvePayingWallet } = require("../helpers/zcash/resolvePayingWallet");
 const { buildPaymentListGrouped } = require("../helpers/db-query");
 
 const { sendRealtimeUpdate, sendToUser } = require("../middleware/websocket");
+const path = require("path");
 
 // List transactions (Admin)
 router.get("/", authenticate, isAdmin, async (req, res) => {
@@ -121,6 +122,14 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
           "No default wallet configured. Please set a default wallet in settings before authorizing payments.",
       });
     }
+
+    adminWallet.dataDir = path.join(
+      process.cwd(),
+      "wallets",
+      req.user.id,
+      adminWallet.accountName,
+      adminWallet.chain,
+    );
 
     // Fetch the selected bounties with their assignees
     const bounties = await prisma.bounty.findMany({
