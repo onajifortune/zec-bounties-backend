@@ -189,6 +189,17 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
 
     // Execute payment
     const sendResult = await executeZingoQuickSend(paymentList, adminWallet);
+
+    if (sendResult.error) {
+      const errorMessage = sendResult.error || "Unknown payment error";
+      console.error("❌ Zingo payment error:", errorMessage);
+      return res.status(422).json({
+        success: false,
+        error: "Payment failed",
+        details: errorMessage,
+      });
+    }
+
     const txResult = sendResult[1];
 
     // Mark all successfully queued bounties as paid
