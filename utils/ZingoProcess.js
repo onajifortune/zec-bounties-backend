@@ -19,6 +19,35 @@ function extractJson(text) {
   return null; // incomplete JSON
 }
 
+function parseZingoBalance(output) {
+  const lines = output
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l &&
+        !l.startsWith("Launching") &&
+        !l.startsWith("Save") &&
+        !l.startsWith("Zingo") &&
+        l !== "[" &&
+        l !== "]",
+    );
+
+  const result = {};
+
+  for (const line of lines) {
+    const [key, value] = line.split(":").map((s) => s.trim());
+    if (!key || !value) continue;
+
+    // Convert numeric values; replace NaN with null
+    const num = Number(value.replace(/_/g, ""));
+    result[key.replace(/['"]/g, "")] = isNaN(num) ? null : num;
+  }
+
+  // Return JSON string instead of object
+  return JSON.stringify(result);
+}
+
 class ZingoProcess {
   constructor(params = {}) {
     this.zingoPath = process.env.ZINGO_CLI;
@@ -57,6 +86,49 @@ class ZingoProcess {
 
     this.proc.on("exit", (code) => {
       console.error("Zingo exited with code", code);
+    });
+  }
+
+  rescan(command, timeout = 10000) {
+    return new Promise((resolve, reject) => {
+      let buffer = "";
+      let resolved = false;
+
+      const onData = (chunk) => {
+        buffer += chunk.toString();
+        const clean = buffer.replace(/\u001b\[[0-9;]*m/g, "");
+        console.log("rescan output chunk:", clean);
+
+        // Check if "Launching rescan..." appeared
+        if (clean.includes("Launching rescan...") && !resolved) {
+          resolved = true;
+          // Wait 3s to let it print final status messages
+          setTimeout(() => {
+            resolve({ message: "Rescan launched", output: clean });
+          }, 3000);
+        }
+      };
+
+      const onError = (err) => {
+        cleanup();
+        reject(err);
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.proc.stdout.off("data", onData);
+        this.proc.stderr.off("data", onError);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Rescan command timeout"));
+      }, timeout);
+
+      this.proc.stdout.on("data", onData);
+      this.proc.stderr.on("data", onError);
+
+      this.proc.stdin.write(command + "\n");
     });
   }
 
@@ -103,6 +175,44 @@ class ZingoProcess {
           clearTimeout(timer);
         }
       });
+    });
+  }
+
+  balance(command, timeout = 10000) {
+    return new Promise((resolve, reject) => {
+      let buffer = "";
+
+      const onData = (chunk) => {
+        buffer += chunk.toString();
+        const clean = buffer.replace(/\u001b\[[0-9;]*m/g, "");
+        const jsonText = parseZingoBalance(clean);
+
+        if (jsonText && jsonText !== "{}") {
+          cleanup();
+          resolve(JSON.parse(jsonText));
+        }
+      };
+
+      const onError = (err) => {
+        cleanup();
+        reject(err);
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.proc.stdout.off("data", onData);
+        this.proc.stderr.off("data", onError);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Zingo command timeout"));
+      }, timeout);
+
+      this.proc.stdout.on("data", onData);
+      this.proc.stderr.on("data", onError);
+
+      this.proc.stdin.write(command + "\n");
     });
   }
 

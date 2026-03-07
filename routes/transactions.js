@@ -23,6 +23,7 @@ const {
 const executeZingoParseAddress = require("../utils/zingoLibParseAddress.js");
 const executeZingoCliSync = require("../utils/zingoLibSync.js");
 const executeZingoCliRescan = require("../utils/zingoLibRescan.js");
+const executeZingoCliBalance = require("../utils/zingoLibBalance.js");
 const { resolvePayingWallet } = require("../helpers/zcash/resolvePayingWallet");
 const { buildPaymentListGrouped } = require("../helpers/db-query");
 
@@ -73,7 +74,9 @@ router.get("/balance", authenticate, isAdmin, async (req, res) => {
     await initZcashOnce((ownerId = req.user.id), (accountName = "Main"));
   }
   console.log(params);
-  const data = await executeZingoCheckBalance("balance", params);
+  const data = await executeZingoCliBalance("balance", params);
+
+  console.log("balance", data);
 
   let balance;
   if (params.chain === "testnet") {
