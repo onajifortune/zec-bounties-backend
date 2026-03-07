@@ -16,9 +16,13 @@ const executeZingoCli = require("../utils/zingoLib.js");
 const executeZingoCliTransactions = require("../utils/zingoLibTransactions.js");
 const executeZingoCheckBalance = require("../utils/zingoLibCheckBalance.js");
 const executeZingoCliAddresses = require("../utils/zingoLibAddresses.js");
-const { getLatestZcashParams } = require("../helpers/zcash/zcashHelper.js.js");
+const {
+  getLatestZcashParams,
+  getDefaultZcashParams,
+} = require("../helpers/zcash/zcashHelper.js.js");
 const executeZingoParseAddress = require("../utils/zingoLibParseAddress.js");
 const executeZingoCliSync = require("../utils/zingoLibSync.js");
+const executeZingoCliRescan = require("../utils/zingoLibRescan.js");
 const { resolvePayingWallet } = require("../helpers/zcash/resolvePayingWallet");
 const { buildPaymentListGrouped } = require("../helpers/db-query");
 
@@ -35,6 +39,32 @@ router.get("/", authenticate, isAdmin, async (req, res) => {
   sendToUser(req.user.id, "transactions_fetched", { transactions: txs });
 
   res.json(txs);
+});
+
+router.get("/rescan", authenticate, isAdmin, async (req, res) => {
+  const params = await getDefaultZcashParams(req.user.id);
+  if (!params) {
+    await initZcashOnce((ownerId = req.user.id), (accountName = "Main"));
+  }
+  await executeZingoCliRescan("rescan", params);
+
+  res.json("Rescan started");
+});
+
+router.get("/sync-status", authenticate, isAdmin, async (req, res) => {
+  const params = await getDefaultZcashParams(req.user.id);
+  if (!params) {
+    await initZcashOnce((ownerId = req.user.id), (accountName = "Main"));
+  }
+  const data = await executeZingoCliSync("sync status", params);
+  console.log("status", data);
+
+  const syncStatusJson = data;
+
+  // ✅ Send balance only to the requesting admin (not broadcast)
+  sendToUser(req.user.id, "sync_status", { data });
+
+  res.json(syncStatusJson);
 });
 
 router.get("/balance", authenticate, isAdmin, async (req, res) => {

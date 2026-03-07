@@ -17,7 +17,7 @@ async function getLatestZcashParams(ownerId) {
     orderBy: { createdAt: "desc" },
     select: {
       serverUrl: true,
-      chain: true, // needed for dataDir path AND for route logic
+      chain: true,
       accountName: true,
     },
   });
@@ -49,15 +49,17 @@ async function getLatestZcashParams(ownerId) {
  */
 async function getLatestZcashParamsForClient() {
   const params = await prisma.zcashParams.findFirst({
-    orderBy: { createdAt: "desc" }, // get the most recently created entry
+    orderBy: { createdAt: "desc" },
     select: {
       serverUrl: true,
       chain: true,
       accountName: true,
       ownerId: true,
-      // dataDir is still omitted as it's server-side only
     },
   });
+
+  if (!params) return null;
+
   params.dataDir = path.join(
     process.cwd(),
     "wallets",
@@ -66,7 +68,60 @@ async function getLatestZcashParamsForClient() {
     params.chain,
   );
 
-  return params; // { serverUrl, chain, accountName } or null if table is empty
+  return params; // { serverUrl, chain, accountName, ownerId, dataDir }
 }
 
-module.exports = { getLatestZcashParams, getLatestZcashParamsForClient };
+/**
+ * Fetch the default Zcash wallet params for a given user.
+ * Falls back to the most recently created params if no default is set.
+ * Returns null if the user has no params at all.
+ *
+ * @param {string} ownerId
+ * @returns {Promise<{ serverUrl: string, chain: string, accountName: string, dataDir: string, isDefault: boolean } | null>}
+ */
+async function getDefaultZcashParams(ownerId) {
+  if (!ownerId) throw new Error("ownerId is required");
+
+  // First try to find the wallet explicitly marked as default
+  let params = await prisma.zcashParams.findFirst({
+    where: { ownerId, isDefault: true },
+    select: {
+      serverUrl: true,
+      chain: true,
+      accountName: true,
+      isDefault: true,
+    },
+  });
+
+  // Fall back to the most recently created wallet if no default is set
+  if (!params) {
+    params = await prisma.zcashParams.findFirst({
+      where: { ownerId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        serverUrl: true,
+        chain: true,
+        accountName: true,
+        isDefault: true,
+      },
+    });
+  }
+
+  if (!params) return null;
+
+  params.dataDir = path.join(
+    process.cwd(),
+    "wallets",
+    ownerId,
+    params.accountName,
+    params.chain,
+  );
+
+  return params; // { serverUrl, chain, accountName, isDefault, dataDir }
+}
+
+module.exports = {
+  getLatestZcashParams,
+  getLatestZcashParamsForClient,
+  getDefaultZcashParams,
+};
