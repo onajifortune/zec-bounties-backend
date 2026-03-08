@@ -157,6 +157,7 @@ router.get("/me", async (req, res) => {
         role: true,
         avatar: true,
         z_address: true,
+        isRobin: true,
       },
     });
 

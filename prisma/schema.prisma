@@ -25,7 +25,7 @@ model User {
   z_address            String?
   avatar               String?
   githubId             String?
-  isTest               Boolean             @default(false)
+  isRobin               Boolean             @default(false)
   isManOfSteel         Boolean             @default(false)
   assignedBounties     Bounty[]            @relation("AssignedBounties")
   createdBounties      Bounty[]            @relation("CreatedBounties")

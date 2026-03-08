@@ -698,6 +698,48 @@ router.get(
   },
 );
 
+router.patch("/switch-role", authenticate, async (req, res) => {
+  try {
+    const { role } = req.body;
+    const userId = req.user.id;
+
+    if (!["ADMIN", "CLIENT"].includes(role)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
+
+    // Fetch user to verify isRobin
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (!user.isRobin) {
+      return res.status(403).json({ error: "Role switching not permitted" });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { role },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        avatar: true,
+        isRobin: true,
+        isManOfSteel: true,
+        z_address: true,
+      },
+    });
+
+    res.json({ user: updated });
+  } catch (error) {
+    console.error("Failed to switch role:", error);
+    res.status(500).json({ error: "Failed to switch role" });
+  }
+});
+
 // Additional endpoints to add to your Prisma-based backend
 
 // Get current user's applications only

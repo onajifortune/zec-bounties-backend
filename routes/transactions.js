@@ -116,11 +116,11 @@ router.get("/addresses", authenticate, isAdmin, async (req, res) => {
   const status = await executeZingoCliSync("sync status", params);
   console.log("status", status);
 
-  const addressesList = await executeZingoCliAddresses("addresses", params);
+  const addresses = await executeZingoCliAddresses("addresses", params);
 
   try {
-    const addresses = addressesList[0];
     const result = addresses.encoded_address;
+    console.log("addresses", result);
 
     // ✅ Send addresses only to the requesting admin (not broadcast)
     sendToUser(req.user.id, "addresses_fetched", { addresses });

@@ -178,6 +178,52 @@ class ZingoProcess {
     });
   }
 
+  addresses(command, timeout = 10000) {
+    return new Promise((resolve, reject) => {
+      const startBufferLen = this.buffer.length;
+
+      this.proc.stdin.write(command + "\n");
+
+      const check = () => {
+        const chunk = this.buffer.slice(startBufferLen);
+        console.log("chunk", chunk);
+
+        // Remove ANSI
+        const clean = chunk.replace(/\u001b\[[0-9;]*m/g, "");
+
+        const jsonText = extractJson(clean);
+        if (jsonText) {
+          try {
+            resolve(JSON.parse(jsonText));
+          } catch (e) {
+            reject(e);
+          }
+          return true;
+        }
+        return false;
+      };
+
+      const interval = setInterval(() => {
+        if (check()) {
+          clearInterval(interval);
+          clearTimeout(timer);
+        }
+      }, 50);
+
+      const timer = setTimeout(() => {
+        clearInterval(interval);
+        reject(new Error("Zingo command timeout"));
+      }, timeout);
+
+      this.waiters.push(() => {
+        if (check()) {
+          clearInterval(interval);
+          clearTimeout(timer);
+        }
+      });
+    });
+  }
+
   balance(command, timeout = 10000) {
     return new Promise((resolve, reject) => {
       let buffer = "";
