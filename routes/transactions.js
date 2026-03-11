@@ -32,14 +32,18 @@ const path = require("path");
 
 // List transactions (Admin)
 router.get("/", authenticate, isAdmin, async (req, res) => {
-  const params = await getLatestZcashParams(req.user.id);
+  const params = await getDefaultZcashParams(req.user.id);
   console.log(params);
   const txs = await executeZingoCliTransactions("transactions", params);
 
   // ✅ Send transactions only to the requesting admin
   sendToUser(req.user.id, "transactions_fetched", { transactions: txs });
 
-  res.json(txs);
+  res.json({
+    transactions: txs,
+    chain: params?.chain,
+    serverUrl: params?.serverUrl,
+  });
 });
 
 router.get("/rescan", authenticate, isAdmin, async (req, res) => {
@@ -69,7 +73,7 @@ router.get("/sync-status", authenticate, isAdmin, async (req, res) => {
 });
 
 router.get("/balance", authenticate, isAdmin, async (req, res) => {
-  const params = await getLatestZcashParams(req.user.id);
+  const params = await getDefaultZcashParams(req.user.id);
   if (!params) {
     await initZcashOnce((ownerId = req.user.id), (accountName = "Main"));
   }
@@ -112,7 +116,7 @@ router.post("/accounts", authenticate, async (req, res) => {
 
 // List addresses (Admin)
 router.get("/addresses", authenticate, isAdmin, async (req, res) => {
-  const params = await getLatestZcashParams(req.user.id);
+  const params = await getDefaultZcashParams(req.user.id);
   const status = await executeZingoCliSync("sync status", params);
   console.log("status", status);
 
@@ -247,10 +251,10 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
     });
 
     // Store transaction record
-    await storeTransactions(
-      txResult,
-      paymentList.reduce((sum, p) => sum + p.amount, 0),
-    );
+    // await storeTransactions(
+    //   txResult,
+    //   paymentList.reduce((sum, p) => sum + p.amount, 0),
+    // );
 
     // ✅ Broadcast payment result to ALL admins (this is a shared event)
     sendRealtimeUpdate(

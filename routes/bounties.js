@@ -268,28 +268,126 @@ router.patch("/:id/approve", authenticate, isAdmin, async (req, res) => {
 });
 
 // Change status (Admin)
+// Replace the existing "Change status (Admin)" route in your bounties router
+// router.patch("/:id/status", authenticate, isAdmin, async (req, res) => { ... })
+
 router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, winnerId } = req.body; // winnerId optional, required when multiple assignees + DONE
     const bountyId = req.params.id;
 
-    let isApproved;
+    // Fetch bounty with its assignees
+    const bounty = await prisma.bounty.findUnique({
+      where: { id: bountyId },
+      include: {
+        assignees: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatar: true,
+                z_address: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
+    if (!bounty) {
+      return res.status(404).json({ error: "Bounty not found" });
+    }
+
+    let isApproved;
     if (status === "CANCELLED") {
       isApproved = false;
     } else if (status !== "TO_DO") {
       isApproved = true;
     }
 
+    // ── Handle DONE status with winner assignment ──────────────────────────
+    let paymentAssigneeId = bounty.assignee; // default: keep existing
+
+    if (status === "DONE") {
+      const assigneeCount = bounty.assignees?.length ?? 0;
+
+      if (assigneeCount === 0) {
+        // No assignees at all — just mark done, no payment target
+        paymentAssigneeId = null;
+      } else if (assigneeCount === 1) {
+        // Auto-assign the single assignee as the payment target
+        paymentAssigneeId = bounty.assignees[0].userId;
+      } else {
+        // Multiple assignees — winnerId is required
+        if (!winnerId) {
+          return res.status(400).json({
+            error: "Winner selection required",
+            requiresWinner: true,
+            assignees: bounty.assignees,
+          });
+        }
+
+        // Validate that winnerId is actually one of the assignees
+        const isValidWinner = bounty.assignees.some(
+          (a) => a.userId === winnerId,
+        );
+        if (!isValidWinner) {
+          return res
+            .status(400)
+            .json({
+              error: "Selected winner is not an assignee of this bounty",
+            });
+        }
+
+        paymentAssigneeId = winnerId;
+      }
+    }
+
     const updated = await prisma.bounty.update({
-      where: { id: bountyId }, // remove Number() if your schema uses String IDs
+      where: { id: bountyId },
       data: {
         status,
-        ...(isApproved !== undefined && { isApproved: isApproved }), // only set if defined
+        ...(isApproved !== undefined && { isApproved }),
+        // Only update assignee field when marking DONE (sets payment target)
+        ...(status === "DONE" && { assignee: paymentAssigneeId }),
+      },
+      include: {
+        assignees: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatar: true,
+                z_address: true,
+              },
+            },
+          },
+        },
+        assigneeUser: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatar: true,
+            z_address: true,
+          },
+        },
+        createdByUser: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            avatar: true,
+          },
+        },
       },
     });
 
-    // ✅ Broadcast status change
     sendRealtimeUpdate("bounty_status_changed", updated, req.user.id);
 
     res.json(updated);
@@ -353,21 +451,22 @@ router.post("/:id/submit", authenticate, async (req, res) => {
     }
 
     // Check if bounty status allows submission
-    if (!["TO_DO", "IN_PROGRESS"].includes(bounty.status)) {
+    if (!["TO_DO", "IN_PROGRESS", "IN_REVIEW"].includes(bounty.status)) {
       return res.status(400).json({
         error: "Work cannot be submitted for bounties in this status",
       });
     }
 
     // Check if there's already a pending or approved submission
-    const existingSubmission = bounty.workSubmissions?.find((submission) =>
-      ["pending", "approved"].includes(submission.status),
+    const existingSubmission = bounty.workSubmissions?.find(
+      (submission) =>
+        submission.submittedBy === userId &&
+        ["pending", "approved"].includes(submission.status),
     );
 
     if (existingSubmission) {
       return res.status(400).json({
-        error:
-          "There is already a pending or approved submission for this bounty",
+        error: "You have already submitted work for this bounty",
       });
     }
 

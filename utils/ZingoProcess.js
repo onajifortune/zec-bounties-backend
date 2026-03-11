@@ -262,6 +262,71 @@ class ZingoProcess {
     });
   }
 
+  quicksend(recipients, timeout = 10000) {
+    return new Promise((resolve, reject) => {
+      let buffer = "";
+
+      // Ensure each recipient has amount + memo
+      const sanitizedRecipients = recipients.map((r) => ({
+        address: r.address,
+        amount: Math.ceil(Number(r.amount)),
+        memo: r.memo || "Sent from the ZEC bounty app!",
+      }));
+
+      const jsonString = JSON.stringify(sanitizedRecipients);
+      const command = `quicksend '${jsonString}'`;
+
+      const onData = (chunk) => {
+        buffer += chunk.toString();
+
+        const clean = buffer.replace(/\u001b\[[0-9;]*m/g, "");
+
+        console.log("quicksendzzy", clean);
+
+        // Extract ALL JSON blocks
+        const jsonBlocks = clean.match(/\{[\s\S]*?\}/g) || [];
+
+        if (jsonBlocks.length > 0) {
+          cleanup();
+
+          const parsed = jsonBlocks
+            .map((block) => {
+              try {
+                return JSON.parse(block);
+              } catch {
+                return null;
+              }
+            })
+            .filter(Boolean);
+
+          if (parsed.length === 1) resolve(parsed[0]);
+          else resolve(parsed);
+        }
+      };
+
+      const onError = (err) => {
+        cleanup();
+        reject(err);
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.proc.stdout.off("data", onData);
+        this.proc.stderr.off("data", onError);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Zingo quicksend timeout"));
+      }, timeout);
+
+      this.proc.stdout.on("data", onData);
+      this.proc.stderr.on("data", onError);
+
+      this.proc.stdin.write(command + "\n");
+    });
+  }
+
   destroy() {
     if (this.proc && !this.proc.killed) {
       this.proc.kill();

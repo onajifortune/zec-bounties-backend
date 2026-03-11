@@ -105,10 +105,32 @@ router.post("/import-wallet", authenticate, async (req, res) => {
     console.log(newParams);
     await executeZingoCliSeed(newParams, seedPhrase, birthdayHeight);
 
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.zcashParams.updateMany({
+          where: { ownerId: userId, isDefault: true },
+          data: { isDefault: false },
+        });
+        await tx.zcashParams.update({
+          where: {
+            ownerId_accountName: { ownerId: userId, accountName },
+          },
+          data: { isDefault: true },
+        });
+      },
+      { timeout: 10000 },
+    );
+
+    // Re-fetch params so the response includes isDefault: true
+    const updatedParams = await prisma.zcashParams.findUnique({
+      where: { ownerId_accountName: { ownerId: userId, accountName } },
+      include: { owner: { select: { id: true, name: true, email: true } } },
+    });
+
     res.status(201).json({
       success: true,
       message: "Wallet imported successfully. Syncing in progress...",
-      data: params,
+      data: updatedParams, // ← was `params`, now has isDefault: true
     });
   } catch (error) {
     console.error("Error importing wallet:", error);

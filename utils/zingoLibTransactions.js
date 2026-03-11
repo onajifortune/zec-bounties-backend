@@ -126,7 +126,7 @@ async function executeZingoCliTransactions(command, params) {
     // 4️⃣ Parse each JSON block safely
     const parsed = extractTransactions(rawOutput);
     // 5️⃣ Return array if >1 objects, or object if just 1
-    if (parsed.length === 1) return parsed[0];
+    // if (parsed.length === 1) return parsed[0];
     return parsed;
   } catch (error) {
     throw new Error(
