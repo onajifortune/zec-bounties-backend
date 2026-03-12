@@ -34,7 +34,8 @@ model User {
   reviewedWork         WorkSubmission[]    @relation("ReviewedWork")
   submittedWork        WorkSubmission[]    @relation("SubmittedWork")
   zcashParams          ZcashParams[]       @relation("UserZcashParams")
-  bountyAssignments    BountyAssignee[] @relation("BountyAssignees") 
+  bountyAssignments    BountyAssignee[]    @relation("BountyAssignees") 
+  ofacVerified         Boolean             @default(false)
 }
 
 model Bounty {

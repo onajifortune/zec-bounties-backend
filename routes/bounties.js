@@ -70,38 +70,6 @@ router.get("/", async (req, res) => {
   res.json(bounties);
 });
 
-// Edit bounty (Admin)
-router.put("/:id", authenticate, isAdmin, async (req, res) => {
-  console.log(req.body);
-  try {
-    const updated = await prisma.bounty.update({
-      where: { id: req.params.id },
-      data: {
-        ...(req.body.title && { title: req.body.title }),
-        ...(req.body.description && { description: req.body.description }),
-        ...(req.body.bountyAmount && { bountyAmount: req.body.bountyAmount }),
-        ...(req.body.timeToComplete && {
-          timeToComplete: req.body.timeToComplete,
-        }),
-        ...(req.body.assignee !== undefined && { assignee: req.body.assignee }),
-        ...(req.body.isApproved !== undefined && {
-          isApproved: req.body.isApproved,
-          // If approved is true, set status to IN_PROGRESS; if false, set to CANCELLED
-          status: req.body.isApproved === true ? "IN_PROGRESS" : "CANCELLED",
-        }),
-      },
-    });
-
-    // ✅ Broadcast bounty update
-    sendRealtimeUpdate("bounty_updated", updated, req.user.id);
-
-    res.json(updated);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to update bounty" });
-  }
-});
-
 // Add assignees to a bounty (Admin only)
 router.post("/:id/assignees", authenticate, isAdmin, async (req, res) => {
   try {
@@ -334,11 +302,9 @@ router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
           (a) => a.userId === winnerId,
         );
         if (!isValidWinner) {
-          return res
-            .status(400)
-            .json({
-              error: "Selected winner is not an assignee of this bounty",
-            });
+          return res.status(400).json({
+            error: "Selected winner is not an assignee of this bounty",
+          });
         }
 
         paymentAssigneeId = winnerId;
@@ -899,18 +865,18 @@ router.get(
   "/categories",
   // authenticate,
   async (req, res) => {
-    try {
-      const categories = await prisma.bountyCategory.findMany({
-        orderBy: {
-          name: "asc",
-        },
-      });
+    // try {
+    const categories = await prisma.bountyCategory.findMany({
+      orderBy: {
+        name: "asc",
+      },
+    });
 
-      res.json(categories);
-    } catch (error) {
-      console.error("Error fetching categories:", error);
-      res.status(500).json({ error: "Failed to fetch categories" });
-    }
+    res.json(categories);
+    // } catch (error) {
+    //   console.error("Error fetching categories:", error);
+    //   res.status(500).json({ error: "Failed to fetch categories" });
+    // }
   },
 );
 
@@ -1263,6 +1229,125 @@ router.post("/apply", authenticate, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/export-payments", authenticate, isAdmin, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+
+    const dateFilter = {};
+    if (from) dateFilter.gte = new Date(from);
+    if (to) dateFilter.lte = new Date(new Date(to).setHours(23, 59, 59, 999));
+
+    const bounties = await prisma.bounty.findMany({
+      where: {
+        isPaid: true,
+        ...(from || to ? { paidAt: dateFilter } : {}),
+      },
+      include: {
+        assigneeUser: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            z_address: true,
+            ofacVerified: true,
+          },
+        },
+        assignees: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                z_address: true,
+                ofacVerified: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { paidAt: "desc" },
+    });
+
+    res.json({ success: true, data: bounties });
+  } catch (error) {
+    console.error("Error fetching export data:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch export data" });
+  }
+});
+
+router.get("/:id", async (req, res) => {
+  try {
+    const bounty = await prisma.bounty.findUnique({
+      where: { id: req.params.id },
+      include: {
+        assigneeUser: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            z_address: true,
+          },
+        },
+        assignees: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                z_address: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!bounty) {
+      return res.status(404).json({ error: "Bounty not found" });
+    }
+
+    res.json(bounty);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch bounty" });
+  }
+});
+
+// Edit bounty (Admin)
+router.put("/:id", authenticate, isAdmin, async (req, res) => {
+  try {
+    const updated = await prisma.bounty.update({
+      where: { id: req.params.id },
+      data: {
+        ...(req.body.title && { title: req.body.title }),
+        ...(req.body.description && { description: req.body.description }),
+        ...(req.body.bountyAmount && { bountyAmount: req.body.bountyAmount }),
+        ...(req.body.timeToComplete && {
+          timeToComplete: req.body.timeToComplete,
+        }),
+        ...(req.body.assignee !== undefined && { assignee: req.body.assignee }),
+        ...(req.body.isApproved !== undefined && {
+          isApproved: req.body.isApproved,
+          // If approved is true, set status to IN_PROGRESS; if false, set to CANCELLED
+          status: req.body.isApproved === true ? "IN_PROGRESS" : "CANCELLED",
+        }),
+      },
+    });
+
+    // ✅ Broadcast bounty update
+    sendRealtimeUpdate("bounty_updated", updated, req.user.id);
+
+    res.json(updated);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to update bounty" });
   }
 });
 
