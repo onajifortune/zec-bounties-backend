@@ -82,7 +82,6 @@ async function getLatestZcashParamsForClient() {
 async function getDefaultZcashParams(ownerId) {
   if (!ownerId) throw new Error("ownerId is required");
 
-  // First try to find the wallet explicitly marked as default
   let params = await prisma.zcashParams.findFirst({
     where: { ownerId, isDefault: true },
     select: {
@@ -90,10 +89,11 @@ async function getDefaultZcashParams(ownerId) {
       chain: true,
       accountName: true,
       isDefault: true,
+      isTeam: true,
+      teamId: true,
     },
   });
 
-  // Fall back to the most recently created wallet if no default is set
   if (!params) {
     params = await prisma.zcashParams.findFirst({
       where: { ownerId },
@@ -103,21 +103,32 @@ async function getDefaultZcashParams(ownerId) {
         chain: true,
         accountName: true,
         isDefault: true,
+        isTeam: true,
+        teamId: true,
       },
     });
   }
 
   if (!params) return null;
 
-  params.dataDir = path.join(
-    process.cwd(),
-    "wallets",
-    ownerId,
-    params.accountName,
-    params.chain,
-  );
+  params.dataDir =
+    params.isTeam && params.teamId
+      ? path.join(
+          process.cwd(),
+          "wallets",
+          `team:${params.teamId}`,
+          params.accountName,
+          params.chain,
+        )
+      : path.join(
+          process.cwd(),
+          "wallets",
+          ownerId,
+          params.accountName,
+          params.chain,
+        );
 
-  return params; // { serverUrl, chain, accountName, isDefault, dataDir }
+  return params;
 }
 
 module.exports = {

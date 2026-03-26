@@ -619,7 +619,11 @@ router.patch(
           // Set the new default
           return tx.zcashParams.update({
             where: {
-              ownerId_accountName: { ownerId: userId, accountName },
+              ownerId_accountName_teamId: {
+                ownerId: userId,
+                accountName,
+                teamId: null,
+              },
             },
             data: { isDefault: true },
           });
