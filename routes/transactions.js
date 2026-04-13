@@ -194,6 +194,8 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
     const paymentList = [];
     const skipped = [];
 
+    console.log(bounties);
+
     for (const bounty of bounties) {
       if (!bounty.assigneeUser?.z_address) {
         skipped.push({

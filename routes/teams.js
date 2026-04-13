@@ -25,8 +25,7 @@ function teamDataDir(teamId, accountName, chain) {
   return path.join(
     process.cwd(),
     "wallets",
-    "teams",
-    teamId,
+    `team:${teamId}`,
     accountName,
     chain,
   );
@@ -70,7 +69,7 @@ async function getOrCreateTeamUser(teamId) {
       id: `team:${teamId}`,
       name: `Team ${teamId}`,
       email: syntheticEmail,
-      role: "TEAM", // ← was "ADMIN"
+      role: "TEAM",
     },
   });
 }
@@ -78,16 +77,10 @@ async function getOrCreateTeamUser(teamId) {
 async function syncWalletToMembers(teamId, wallet, userIds) {
   if (!wallet || !userIds.length) return;
 
-  const teamUser = await getOrCreateTeamUser(teamId);
-
-  // The ZcashParams record owned by the team synthetic user
-  const teamParams = await prisma.zcashParams.findUnique({
-    where: {
-      ownerId_accountName: {
-        ownerId: teamUser.id,
-        accountName: wallet.accountName,
-      },
-    },
+  // findFirst instead of findUnique — ownerId_accountName no longer exists
+  // as a two-field key after teamId was added to the unique constraint.
+  const teamParams = await prisma.zcashParams.findFirst({
+    where: { teamId, accountName: wallet.accountName },
   });
 
   if (!teamParams) return; // wallet not fully initialized yet
@@ -101,11 +94,12 @@ async function syncWalletToMembers(teamId, wallet, userIds) {
           data: { isDefault: false },
         });
 
-        // Upsert a ZcashParams row for this user pointing to the team wallet
+        // Upsert a ZcashParams row for this user pointing to the team wallet.
+        // SQLite doesn't treat two NULLs as equal in a unique index, but teamId
+        // is non-null here so the compound key works fine.
         await tx.zcashParams.upsert({
           where: {
             ownerId_accountName_teamId: {
-              // ← updated constraint name
               ownerId: userId,
               accountName: wallet.accountName,
               teamId,
@@ -496,9 +490,7 @@ router.post("/:teamId/wallet", authenticate, async (req, res) => {
         data: { teamId, accountName: accountName.trim(), chain, serverUrl },
       });
 
-      teamUser = await getOrCreateTeamUser(teamId);
-
-      await initZcashOnce(teamUser.id, wallet.accountName, wallet.chain);
+      await initZcashOnce(req.user.id, wallet.accountName, wallet.chain);
     } catch (err) {
       // Roll back DB records
       if (wallet) {
@@ -584,9 +576,12 @@ router.post("/:teamId/wallet/import", authenticate, async (req, res) => {
         data: { teamId, accountName: accountName.trim(), chain, serverUrl },
       });
 
-      teamUser = await getOrCreateTeamUser(teamId);
-
-      await initZcashOnce(teamUser.id, wallet.accountName, wallet.chain);
+      await initZcashOnce(
+        req.user.id,
+        wallet.accountName,
+        wallet.chain,
+        teamId,
+      );
 
       const params = buildTeamParams(teamId, wallet);
       await executeZingoCliSeed(params, seedPhrase, birthdayHeight);

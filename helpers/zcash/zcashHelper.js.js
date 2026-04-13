@@ -72,6 +72,37 @@ async function getLatestZcashParamsForClient() {
 }
 
 /**
+ * Fetch latest Zcash params where isTeam is false.
+ * Returns null if no individual (non-team) params exist.
+ *
+ * @returns {Promise<{ serverUrl: string, chain: string, accountName: string, ownerId: string, dataDir: string } | null>}
+ */
+async function getLatestZcashParamsForClientUser() {
+  const params = await prisma.zcashParams.findFirst({
+    where: { isTeam: false },
+    orderBy: { createdAt: "desc" },
+    select: {
+      serverUrl: true,
+      chain: true,
+      accountName: true,
+      ownerId: true,
+    },
+  });
+
+  if (!params) return null;
+
+  params.dataDir = path.join(
+    process.cwd(),
+    "wallets",
+    params.ownerId,
+    params.accountName,
+    params.chain,
+  );
+
+  return params; // { serverUrl, chain, accountName, ownerId, dataDir }
+}
+
+/**
  * Fetch the default Zcash wallet params for a given user.
  * Falls back to the most recently created params if no default is set.
  * Returns null if the user has no params at all.
@@ -134,5 +165,6 @@ async function getDefaultZcashParams(ownerId) {
 module.exports = {
   getLatestZcashParams,
   getLatestZcashParamsForClient,
+  getLatestZcashParamsForClientUser,
   getDefaultZcashParams,
 };
