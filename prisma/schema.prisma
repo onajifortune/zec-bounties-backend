@@ -63,6 +63,12 @@ model Bounty {
   applications      BountyApplication[]
   workSubmissions   WorkSubmission[]
   assignees         BountyAssignee[]
+  
+  @@index([status])
+  @@index([createdBy])
+  @@index([assignee])
+  @@index([dateCreated])
+  @@index([isPaid, paidAt])
 }
 
 model BountyAssignee {
@@ -75,6 +81,9 @@ model BountyAssignee {
 
   @@unique([bountyId, userId])
   @@map("bounty_assignees")
+
+  @@index([bountyId])
+  @@index([userId])
 }
 
 model BountyApplication {
@@ -92,6 +101,9 @@ model BountyApplication {
 
   @@unique([bountyId, applicantId])
   @@map("bounty_applications")
+
+  @@index([bountyId])
+  @@index([applicantId])
 }
 
 model Transaction {
@@ -118,6 +130,10 @@ model WorkSubmission {
   bounty         Bounty    @relation(fields: [bountyId], references: [id], onDelete: Cascade)
 
   @@map("work_submissions")
+
+  @@index([bountyId, status])
+  @@index([submittedBy])
+
 }
 
 model ZcashParams {
