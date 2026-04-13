@@ -25,7 +25,7 @@ model User {
   z_address            String?
   avatar               String?
   githubId             String?
-  isRobin               Boolean             @default(false)
+  isRobin              Boolean             @default(false)
   isManOfSteel         Boolean             @default(false)
   assignedBounties     Bounty[]            @relation("AssignedBounties")
   createdBounties      Bounty[]            @relation("CreatedBounties")
@@ -34,8 +34,9 @@ model User {
   reviewedWork         WorkSubmission[]    @relation("ReviewedWork")
   submittedWork        WorkSubmission[]    @relation("SubmittedWork")
   zcashParams          ZcashParams[]       @relation("UserZcashParams")
-  bountyAssignments    BountyAssignee[]    @relation("BountyAssignees") 
+  bountyAssignments    BountyAssignee[]    @relation("BountyAssignees")
   ofacVerified         Boolean             @default(false)
+  teamMembers          TeamMember[]        @relation("UserTeams")
 }
 
 model Bounty {
@@ -55,7 +56,7 @@ model Bounty {
   categoryId        String?
   createdBy         String
   assignee          String?
-  difficulty        Difficulty              @default(EASY)
+  difficulty        Difficulty          @default(EASY)
   assigneeUser      User?               @relation("AssignedBounties", fields: [assignee], references: [id])
   createdByUser     User                @relation("CreatedBounties", fields: [createdBy], references: [id])
   category          BountyCategory?     @relation("BountyCategory", fields: [categoryId], references: [name])
@@ -75,7 +76,6 @@ model BountyAssignee {
   @@unique([bountyId, userId])
   @@map("bounty_assignees")
 }
-
 
 model BountyApplication {
   id            String    @id @default(cuid())
@@ -126,18 +126,66 @@ model ZcashParams {
   serverUrl   String   @default("https://zec.rocks:443")
   accountName String
   ownerId     String
+  isTeam      Boolean  @default(false)
+  teamId      String?
   owner       User     @relation("UserZcashParams", fields: [ownerId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  isDefault   Boolean @default(false)
+  isDefault   Boolean  @default(false)
 
-  @@unique([ownerId, accountName])
+  @@unique([ownerId, accountName, teamId])  // ← teamId included
   @@map("zcash_params")
 }
+
+// ─── Teams ───────────────────────────────────────────────────────────────────
+
+model Team {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  description String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  members     TeamMember[]
+  wallet      TeamWallet?
+
+  @@map("teams")
+}
+
+model TeamMember {
+  id       String   @id @default(cuid())
+  teamId   String
+  userId   String
+  // SQLite has no native enum — store as String and validate in app layer
+  role     String   @default("MEMBER") // OWNER | ADMIN | MEMBER
+  joinedAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation("UserTeams", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@map("team_members")
+}
+
+model TeamWallet {
+  id          String   @id @default(cuid())
+  teamId      String   @unique
+  accountName String
+  chain       String   @default("mainnet")
+  serverUrl   String   @default("https://zec.rocks:443")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@map("team_wallets")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
 
 enum UserRole {
   CLIENT
   ADMIN
+  TEAM
 }
 
 enum Difficulty {

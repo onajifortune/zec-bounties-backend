@@ -74,50 +74,56 @@ router.get("/", async (req, res) => {
 router.post("/:id/assignees", authenticate, isAdmin, async (req, res) => {
   try {
     const { id: bountyId } = req.params;
-    const { userIds } = req.body; // array of user IDs to add
+    const { userIds } = req.body;
 
-    if (!Array.isArray(userIds) || userIds.length === 0) {
-      return res.status(400).json({ error: "userIds array is required" });
+    if (!Array.isArray(userIds)) {
+      return res.status(400).json({ error: "userIds must be an array" });
     }
 
-    const bounty = await prisma.bounty.findUnique({
-      where: { id: bountyId },
-    });
-
+    const bounty = await prisma.bounty.findUnique({ where: { id: bountyId } });
     if (!bounty) {
       return res.status(404).json({ error: "Bounty not found" });
     }
 
-    // Add all assignees, skip duplicates via upsert
-    const assignees = await Promise.all(
-      userIds.map((userId) =>
-        prisma.bountyAssignee.upsert({
-          where: {
-            bountyId_userId: { bountyId, userId },
-          },
-          update: {}, // already exists, no update needed
-          create: { bountyId, userId },
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                avatar: true,
-                z_address: true,
-              },
-            },
-          },
-        }),
-      ),
-    );
+    // ── Remove all existing assignees first ───────────────────────────────
+    await prisma.bountyAssignee.deleteMany({ where: { bountyId } });
 
-    // Update bounty status to IN_PROGRESS if it was TO_DO
-    if (bounty.status === "TO_DO") {
+    let assignees = [];
+
+    if (userIds.length === 0) {
+      // No assignees → cancel the bounty
       await prisma.bounty.update({
         where: { id: bountyId },
-        data: { status: "IN_PROGRESS" },
+        data: { status: "CANCELLED", assignee: null },
       });
+    } else {
+      // Recreate with the new set
+      assignees = await Promise.all(
+        userIds.map((userId) =>
+          prisma.bountyAssignee.create({
+            data: { bountyId, userId },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  avatar: true,
+                  z_address: true,
+                },
+              },
+            },
+          }),
+        ),
+      );
+
+      // Move to IN_PROGRESS if it was TO_DO or CANCELLED
+      if (["TO_DO", "CANCELLED"].includes(bounty.status)) {
+        await prisma.bounty.update({
+          where: { id: bountyId },
+          data: { status: "IN_PROGRESS" },
+        });
+      }
     }
 
     sendRealtimeUpdate(
@@ -125,11 +131,10 @@ router.post("/:id/assignees", authenticate, isAdmin, async (req, res) => {
       { bountyId, assignees },
       req.user.id,
     );
-
-    res.status(201).json({ assignees });
+    res.status(200).json({ assignees });
   } catch (error) {
-    console.error("Error adding assignees:", error);
-    res.status(500).json({ error: "Failed to add assignees" });
+    console.error("Error updating assignees:", error);
+    res.status(500).json({ error: "Failed to update assignees" });
   }
 });
 
@@ -269,9 +274,9 @@ router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
     }
 
     let isApproved;
-    if (status === "CANCELLED") {
+    if (status === "CANCELLED" || status === "TO_DO") {
       isApproved = false;
-    } else if (status !== "TO_DO") {
+    } else {
       isApproved = true;
     }
 
@@ -282,13 +287,15 @@ router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
       const assigneeCount = bounty.assignees?.length ?? 0;
 
       if (assigneeCount === 0) {
-        // No assignees at all — just mark done, no payment target
-        paymentAssigneeId = null;
+        // If bounty was created by a CLIENT, they are self-assigned — preserve it
+        if (bounty.assignee) {
+          // paymentAssigneeId is already set to bounty.assignee, so do nothing
+        } else {
+          paymentAssigneeId = null;
+        }
       } else if (assigneeCount === 1) {
-        // Auto-assign the single assignee as the payment target
         paymentAssigneeId = bounty.assignees[0].userId;
       } else {
-        // Multiple assignees — winnerId is required
         if (!winnerId) {
           return res.status(400).json({
             error: "Winner selection required",
@@ -296,8 +303,6 @@ router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
             assignees: bounty.assignees,
           });
         }
-
-        // Validate that winnerId is actually one of the assignees
         const isValidWinner = bounty.assignees.some(
           (a) => a.userId === winnerId,
         );
@@ -306,7 +311,6 @@ router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
             error: "Selected winner is not an assignee of this bounty",
           });
         }
-
         paymentAssigneeId = winnerId;
       }
     }
@@ -315,8 +319,7 @@ router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
       where: { id: bountyId },
       data: {
         status,
-        ...(isApproved !== undefined && { isApproved }),
-        // Only update assignee field when marking DONE (sets payment target)
+        isApproved, // always set, not conditional
         ...(status === "DONE" && { assignee: paymentAssigneeId }),
       },
       include: {
