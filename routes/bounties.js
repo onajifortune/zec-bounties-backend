@@ -1077,6 +1077,47 @@ router.get("/export-payments", authenticate, isAdmin, async (req, res) => {
   }
 });
 
+router.get("/stats/totals", async (req, res) => {
+  try {
+    const cacheKey = "stats:totals";
+
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(cached);
+
+    const [totalAmountResult, countResult] = await Promise.all([
+      // Sum ALL bounty amounts — no pagination, one DB round-trip
+      prisma.bounty.aggregate({
+        _sum: { bountyAmount: true },
+        _count: { id: true },
+      }),
+      // Separate counts per status so the dashboard can show accurate numbers
+      prisma.bounty.groupBy({
+        by: ["status"],
+        _count: { id: true },
+      }),
+    ]);
+
+    const statusCounts = countResult.reduce((acc, row) => {
+      acc[row.status] = row._count.id;
+      return acc;
+    }, {});
+
+    const result = {
+      totalBountyAmount: totalAmountResult._sum.bountyAmount ?? 0,
+      totalBountyCount: totalAmountResult._count.id,
+      statusCounts,
+    };
+
+    // Cache for 60 s — short TTL so it reflects recent changes quickly
+    await setCache(cacheKey, result, 60);
+
+    res.json(result);
+  } catch (error) {
+    console.error("Error fetching stats:", error);
+    res.status(500).json({ error: "Failed to fetch stats" });
+  }
+});
+
 // ─── Get single bounty ────────────────────────────────────────────────────────
 
 router.get("/:id", async (req, res) => {
