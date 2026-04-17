@@ -1,15 +1,16 @@
 const express = require("express");
-const { PrismaClient } = require("@prisma/client");
-
-// ─── Single shared PrismaClient with connection pooling ───────────────────────
-// Never instantiate PrismaClient inside route handlers or per-request.
-const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
-});
+const prisma = require("../prisma/client");
 
 const router = express.Router();
 const { authenticate, isAdmin } = require("../middleware/auth");
 const { sendRealtimeUpdate } = require("../middleware/websocket");
+const {
+  getCache,
+  setCache,
+  delCache,
+  deleteCacheByPattern,
+  TTL,
+} = require("../utils/cache");
 
 // ─── Reusable select shapes (avoids re-typing & keeps payloads small) ─────────
 const USER_SELECT = { id: true, name: true, avatar: true };
@@ -24,6 +25,22 @@ const ASSIGNEE_INCLUDE = {
   assignees: {
     include: { user: { select: USER_SELECT } },
   },
+};
+
+// helper — call after any write that touches a specific bounty
+const invalidateBounty = async (bountyId) => {
+  await Promise.all([
+    delCache(`bounty:${bountyId}`),
+    delCache(`assignees:${bountyId}`),
+    deleteCacheByPattern("bounties:*"),
+  ]);
+};
+
+const invalidateApplications = async (applicantId) => {
+  await Promise.all([
+    delCache(`applications:user:${applicantId}`),
+    delCache("applications:all"),
+  ]);
 };
 
 // ─── Create bounty ────────────────────────────────────────────────────────────
@@ -53,6 +70,7 @@ router.post("/", authenticate, async (req, res) => {
     });
 
     sendRealtimeUpdate("new_bounty", bounty, req.user.id);
+    await deleteCacheByPattern("bounties:*");
     res.status(201).json(bounty);
   } catch (err) {
     console.error(err);
@@ -61,13 +79,23 @@ router.post("/", authenticate, async (req, res) => {
 });
 
 // ─── List bounties (paginated, lean payload) ──────────────────────────────────
-// FIX: Added a hard limit cap so no single request can dump the entire table.
-// FIX: Only select the columns the list view actually needs — drop heavy joins.
+
 router.get("/", async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(parseInt(req.query.limit) || 10, 50); // cap at 50
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
 
+    const cacheKey = `bounties:${JSON.stringify({ page, limit })}`;
+
+    // 1. CHECK CACHE FIRST
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      console.log("Cache Hit");
+      return res.json(cached);
+    }
+    console.log("Cache Miss");
+
+    // 2. DB FALLBACK
     const [bounties, total] = await Promise.all([
       prisma.bounty.findMany({
         skip: (page - 1) * limit,
@@ -79,11 +107,15 @@ router.get("/", async (req, res) => {
           },
         },
       }),
-      // Return total so the client can render pagination controls
       prisma.bounty.count(),
     ]);
 
-    res.json({ data: bounties, total, page, limit });
+    const result = { data: bounties, total, page, limit };
+
+    // 3. STORE IN CACHE
+    await setCache(cacheKey, result, TTL.BOUNTY_LIST);
+
+    res.json(result);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch bounties" });
@@ -145,6 +177,7 @@ router.post("/:id/assignees", authenticate, isAdmin, async (req, res) => {
       { bountyId, assignees },
       req.user.id,
     );
+    await invalidateBounty(bountyId);
     res.status(200).json({ assignees });
   } catch (error) {
     console.error("Error updating assignees:", error);
@@ -168,8 +201,10 @@ router.delete(
       sendRealtimeUpdate(
         "bounty_assignees_updated",
         { bountyId, removedUserId: userId },
+
         req.user.id,
       );
+      await invalidateBounty(bountyId);
       res.json({ message: "Assignee removed successfully" });
     } catch (error) {
       console.error("Error removing assignee:", error);
@@ -181,11 +216,15 @@ router.delete(
 // ─── Get assignees for a bounty ───────────────────────────────────────────────
 router.get("/:id/assignees", authenticate, async (req, res) => {
   try {
+    const cacheKey = `assignees:${req.params.id}`;
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(cached);
     const assignees = await prisma.bountyAssignee.findMany({
       where: { bountyId: req.params.id },
       include: { user: { select: USER_SELECT_FULL } },
       orderBy: { assignedAt: "asc" },
     });
+    await setCache(cacheKey, assignees, TTL.ASSIGNEES);
     res.json(assignees);
   } catch (error) {
     console.error("Error fetching assignees:", error);
@@ -213,6 +252,7 @@ router.put(
       });
 
       sendRealtimeUpdate("payment_authorized", updated, req.user.id);
+      await invalidateBounty(req.params.id);
       res.json(updated);
     } catch (error) {
       console.error("Error updating bounty:", error);
@@ -230,6 +270,7 @@ router.patch("/:id/approve", authenticate, isAdmin, async (req, res) => {
       data: { approved: true },
     });
     sendRealtimeUpdate("bounty_approved", updated, req.user.id);
+    await invalidateBounty(req.params.id);
     res.json(updated);
   } catch (error) {
     console.error(error);
@@ -304,6 +345,7 @@ router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
     });
 
     sendRealtimeUpdate("bounty_status_changed", updated, req.user.id);
+    await invalidateBounty(bountyId);
     res.json(updated);
   } catch (error) {
     console.error(error);
@@ -604,6 +646,10 @@ router.patch(
 // ─── Fetch all users ──────────────────────────────────────────────────────────
 router.get("/users", async (req, res) => {
   try {
+    const cacheKey = "users:all";
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(cached);
+
     const users = await prisma.user.findMany({
       select: {
         id: true,
@@ -613,6 +659,7 @@ router.get("/users", async (req, res) => {
         z_address: true,
       },
     });
+    await setCache(cacheKey, users, TTL.USERS);
     res.json(users);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -649,6 +696,7 @@ router.patch("/switch-role", authenticate, async (req, res) => {
         z_address: true,
       },
     });
+    await delCache("users:all");
     res.json({ user: updated });
   } catch (error) {
     console.error("Failed to switch role:", error);
@@ -659,6 +707,9 @@ router.patch("/switch-role", authenticate, async (req, res) => {
 // ─── My applications ──────────────────────────────────────────────────────────
 router.get("/my-applications", authenticate, async (req, res) => {
   try {
+    const cacheKey = `applications:user:${req.user.id}`;
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(cached);
     const applications = await prisma.bountyApplication.findMany({
       where: { applicantId: req.user.id },
       include: {
@@ -674,6 +725,7 @@ router.get("/my-applications", authenticate, async (req, res) => {
       },
       orderBy: { appliedAt: "desc" },
     });
+    await setCache(cacheKey, applications, TTL.APPLICATIONS);
     res.json(applications);
   } catch (err) {
     console.error(err);
@@ -684,6 +736,9 @@ router.get("/my-applications", authenticate, async (req, res) => {
 // ─── All applications (Admin) ─────────────────────────────────────────────────
 router.get("/all-applications", authenticate, isAdmin, async (req, res) => {
   try {
+    const cacheKey = "applications:all";
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(cached);
     const applications = await prisma.bountyApplication.findMany({
       include: {
         bounty: {
@@ -698,6 +753,7 @@ router.get("/all-applications", authenticate, isAdmin, async (req, res) => {
       },
       orderBy: { appliedAt: "desc" },
     });
+    await setCache(cacheKey, applications, TTL.APPLICATIONS);
     res.json(applications);
   } catch (err) {
     console.error(err);
@@ -708,9 +764,14 @@ router.get("/all-applications", authenticate, isAdmin, async (req, res) => {
 // ─── Categories ───────────────────────────────────────────────────────────────
 router.get("/categories", async (req, res) => {
   try {
+    const cacheKey = "categories:all";
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(cached);
+
     const categories = await prisma.bountyCategory.findMany({
       orderBy: { name: "asc" },
     });
+    await setCache(cacheKey, categories, TTL.CATEGORIES);
     res.json(categories);
   } catch (error) {
     console.error("Error fetching categories:", error);
@@ -733,6 +794,7 @@ router.post("/categories", authenticate, isAdmin, async (req, res) => {
     const category = await prisma.bountyCategory.create({
       data: { name: name.trim() },
     });
+    await delCache("categories:all");
     sendRealtimeUpdate("category_created", category, req.user.id);
     res.status(201).json(category);
   } catch (error) {
@@ -762,6 +824,7 @@ router.put(
         where: { id: parseInt(categoriesId) },
         data: { name: name.trim() },
       });
+      await delCache("categories:all");
       sendRealtimeUpdate("category_updated", category, req.user.id);
       res.json(category);
     } catch (error) {
@@ -793,6 +856,7 @@ router.delete(
       }
 
       await prisma.bountyCategory.delete({ where: { id } });
+      await delCache("categories:all");
       sendRealtimeUpdate("category_deleted", { id }, req.user.id);
       res.json({ message: "Category deleted successfully" });
     } catch (error) {
@@ -876,6 +940,8 @@ router.put(
         }
         return updated;
       });
+      await invalidateApplications(application.applicantId);
+      await invalidateBounty(application.bountyId);
 
       sendRealtimeUpdate("application_updated", result, req.user.id);
       res.json(result);
@@ -908,6 +974,8 @@ router.delete(
           .json({ error: "Cannot withdraw a reviewed application" });
 
       await prisma.bountyApplication.delete({ where: { id: applicationId } });
+      await invalidateApplications(application.applicantId);
+      await invalidateBounty(application.bountyId);
       sendRealtimeUpdate(
         "application_deleted",
         { id: applicationId, bountyId: application.bountyId },
@@ -952,6 +1020,8 @@ router.post("/apply", authenticate, async (req, res) => {
         applicantUser: { select: { id: true, name: true, email: true } },
       },
     });
+    await invalidateApplications(applicantId);
+    await invalidateBounty(application.bountyId);
 
     sendRealtimeUpdate("application_created", application, applicantId);
     res.status(201).json(application);
@@ -1008,10 +1078,18 @@ router.get("/export-payments", authenticate, isAdmin, async (req, res) => {
 });
 
 // ─── Get single bounty ────────────────────────────────────────────────────────
+
 router.get("/:id", async (req, res) => {
   try {
+    const bountyId = req.params.id;
+    const cacheKey = `bounty:${bountyId}`;
+
+    // CHECK CACHE
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(cached);
+
     const bounty = await prisma.bounty.findUnique({
-      where: { id: req.params.id },
+      where: { id: bountyId },
       include: {
         assigneeUser: {
           select: { id: true, name: true, email: true, z_address: true },
@@ -1025,7 +1103,12 @@ router.get("/:id", async (req, res) => {
         },
       },
     });
+
     if (!bounty) return res.status(404).json({ error: "Bounty not found" });
+
+    // STORE CACHE
+    await setCache(cacheKey, bounty, TTL.BOUNTY_SINGLE);
+
     res.json(bounty);
   } catch (error) {
     console.error(error);
@@ -1054,6 +1137,7 @@ router.put("/:id", authenticate, isAdmin, async (req, res) => {
     });
 
     sendRealtimeUpdate("bounty_updated", updated, req.user.id);
+    await invalidateBounty(req.params.id);
     res.json(updated);
   } catch (error) {
     console.error(error);

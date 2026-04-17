@@ -24,6 +24,7 @@
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.2.1",
+    "redis": "^5.12.1",
     "ws": "^8.14.2"
   },
   "devDependencies": {

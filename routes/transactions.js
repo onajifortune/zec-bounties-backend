@@ -1,6 +1,5 @@
 const express = require("express");
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../prisma/client");
 const router = express.Router();
 const axios = require("axios");
 const { authenticate, isAdmin } = require("../middleware/auth");
@@ -26,9 +25,18 @@ const executeZingoCliRescan = require("../utils/zingoLibRescan.js");
 const executeZingoCliBalance = require("../utils/zingoLibBalance.js");
 const { resolvePayingWallet } = require("../helpers/zcash/resolvePayingWallet");
 const { buildPaymentListGrouped } = require("../helpers/db-query");
+const { delCache, deleteCacheByPattern } = require("../utils/cache");
 
 const { sendRealtimeUpdate, sendToUser } = require("../middleware/websocket");
+
 const path = require("path");
+
+const invalidateBounty = async (bountyId) => {
+  await Promise.all([
+    delCache(`bounty:${bountyId}`),
+    deleteCacheByPattern("bounties:*"),
+  ]);
+};
 
 // List transactions (Admin)
 router.get("/", authenticate, isAdmin, async (req, res) => {
@@ -251,6 +259,7 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
         paidAt: new Date(),
       },
     });
+    await Promise.all(paidBountyIds.map((id) => invalidateBounty(id)));
 
     // Store transaction record
     // await storeTransactions(
@@ -367,6 +376,7 @@ router.post(
           ? JSON.parse(updatedBounty.paymentScheduled)
           : null,
       };
+      await invalidateBounty(bountyId);
 
       // ✅ Broadcast bounty payment authorization to ALL (shared bounty state)
       sendRealtimeUpdate(
@@ -467,6 +477,7 @@ router.put(
           ? JSON.parse(updatedBounty.paymentScheduled)
           : null,
       };
+      await invalidateBounty(bountyId);
 
       // ✅ Broadcast bounty payment authorization to ALL (shared bounty state)
       sendRealtimeUpdate(
@@ -664,6 +675,7 @@ router.put("/:id/mark-paid", authenticate, isAdmin, async (req, res) => {
         },
       },
     });
+    await invalidateBounty(bountyId);
 
     // ✅ Broadcast bounty paid status to ALL (shared bounty state)
     sendRealtimeUpdate("bounty_marked_paid", updatedBounty, req.user.id);
@@ -680,7 +692,8 @@ router.put("/:id/mark-paid", authenticate, isAdmin, async (req, res) => {
 
 // Pay bounty
 router.post("/pay/:bountyId", authenticate, isAdmin, async (req, res) => {
-  const bountyId = Number(req.params.bountyId);
+  const bountyId = req.params.bountyId;
+
   const bounty = await prisma.bounty.findUnique({
     where: { id: bountyId },
     include: { assignee: true },
@@ -721,6 +734,7 @@ router.post("/pay/:bountyId", authenticate, isAdmin, async (req, res) => {
         amountZec: bounty.bountyAmountZec,
       },
     });
+    await invalidateBounty(bountyId);
 
     // ✅ Broadcast bounty paid to ALL admins (shared event)
     sendRealtimeUpdate(

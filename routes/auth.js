@@ -2,7 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { PrismaClient } = require("@prisma/client");
+const prisma = require("../prisma/client");
 const { authenticate, isAdmin } = require("../middleware/auth");
 const { verifyZaddress } = require("../helpers/db-query.js");
 const {
@@ -10,8 +10,6 @@ const {
   getLatestZcashParamsForClientUser,
 } = require("../helpers/zcash/zcashHelper.js");
 // const { isSaplingZcashAddress } = require("../utils/zingolib/parseAddresses");
-
-const prisma = new PrismaClient();
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET;
 

@@ -9,6 +9,7 @@ const cors = require("cors");
 const { handleWebSocket } = require("./middleware/websocket");
 const { WebSocketServer } = require("ws");
 const prisma = require("./prisma/client");
+const { connectRedis } = require("./config/redis");
 
 const app = express();
 const server = createServer(app);
@@ -47,7 +48,8 @@ app.use((req, res, next) => {
 
 // Start server
 const PORT = process.env.PORT || 9001;
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
+  await connectRedis();
   console.log(`Server running on port ${PORT}`);
   console.log(`WebSocket endpoint: ws://localhost:${PORT}`);
 });

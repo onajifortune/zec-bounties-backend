@@ -2,7 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { PrismaClient } = require("@prisma/client");
+const prisma = require("../prisma/client");
 const { authenticate, isAdmin } = require("../middleware/auth");
 const { initZcashOnce } = require("../zcash/init");
 const { zcashParams } = require("../prisma/client");
@@ -12,7 +12,6 @@ const { getLatestZcashParams } = require("../helpers/zcash/zcashHelper.js");
 const { sendRealtimeUpdate } = require("../middleware/websocket");
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
 // ---------------------------------------------------------------------------
 // Helper — look up a non-team wallet by (ownerId, accountName).
