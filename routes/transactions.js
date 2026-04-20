@@ -234,6 +234,10 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
       `💸 Paying ${paymentList.length} bounties from wallet "${adminWallet.accountName}" (admin: ${req.user.id})`,
     );
 
+    console.log(paymentList);
+
+    return;
+
     // Execute payment
     const sendResult = await executeZingoQuickSend(paymentList, adminWallet);
 
