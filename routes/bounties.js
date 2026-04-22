@@ -592,6 +592,14 @@ router.patch(
               },
               data: { status: "rejected" },
             });
+
+            // Remove all assignees except the winner
+            await tx.bountyAssignee.deleteMany({
+              where: {
+                bountyId: submission.bounty.id,
+                userId: { not: submission.submittedBy },
+              },
+            });
           }
 
           const updBounty = await tx.bounty.update({
@@ -630,6 +638,7 @@ router.patch(
 
       sendRealtimeUpdate("submission_reviewed", updatedSubmission, req.user.id);
       sendRealtimeUpdate("bounty_updated", updatedBounty, req.user.id);
+      await invalidateBounty(submission.bounty.id);
 
       res.json({
         message: "Submission reviewed successfully",

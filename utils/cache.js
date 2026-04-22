@@ -2,7 +2,7 @@ const { redisClient } = require("../config/redis");
 
 // Centralised TTLs — one place to tune them all
 const TTL = {
-  BOUNTY_LIST: 60, // seconds
+  BOUNTY_LIST: 300, // seconds
   BOUNTY_SINGLE: 120,
   CATEGORIES: 300, // categories change rarely
   USERS: 120, // ← add
