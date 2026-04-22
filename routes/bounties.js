@@ -666,6 +666,7 @@ router.get("/users", async (req, res) => {
         email: true,
         role: true,
         z_address: true,
+        avatar: true,
       },
     });
     await setCache(cacheKey, users, TTL.USERS);
