@@ -90,7 +90,7 @@ router.get("/", async (req, res) => {
     // 1. CHECK CACHE FIRST
     const cached = await getCache(cacheKey);
     if (cached) {
-      console.log("Cache Hit", cached);
+      console.log("Cache Hit");
       return res.json(cached);
     }
     console.log("Cache Miss");
