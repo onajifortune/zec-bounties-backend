@@ -67,6 +67,23 @@ router.post("/", authenticate, async (req, res) => {
         isApproved,
         categoryId,
       },
+      include: {
+        createdByUser: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            avatar: true,
+          },
+        },
+        assignees: {
+          include: { user: { select: USER_SELECT } },
+        },
+        assigneeUser: {
+          select: USER_SELECT_FULL,
+        },
+      },
     });
 
     sendRealtimeUpdate("new_bounty", bounty, req.user.id);
