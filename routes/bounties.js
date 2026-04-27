@@ -99,6 +99,7 @@ router.post("/", authenticate, async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
+    console.log("GET / handler reached");
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(parseInt(req.query.limit) || 10, 50);
 
