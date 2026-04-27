@@ -22,6 +22,7 @@ const {
 const executeZingoParseAddress = require("../utils/zingoLibParseAddress.js");
 const executeZingoCliSync = require("../utils/zingoLibSync.js");
 const executeZingoCliRescan = require("../utils/zingoLibRescan.js");
+const executeZingoCliQuit = require("../utils/zingoLibQuit.js");
 const executeZingoCliBalance = require("../utils/zingoLibBalance.js");
 const { resolvePayingWallet } = require("../helpers/zcash/resolvePayingWallet");
 const { buildPaymentListGrouped } = require("../helpers/db-query");
@@ -59,6 +60,7 @@ router.get("/rescan", authenticate, isAdmin, async (req, res) => {
   if (!params) {
     await initZcashOnce((ownerId = req.user.id), (accountName = "Main"));
   }
+  await executeZingoCliQuit("quit", params);
   await executeZingoCliRescan("rescan", params);
 
   res.json("Rescan started");

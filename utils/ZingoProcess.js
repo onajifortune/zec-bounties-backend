@@ -89,6 +89,55 @@ class ZingoProcess {
     });
   }
 
+  quit(command, timeout = 10000) {
+    return new Promise((resolve, reject) => {
+      let buffer = "";
+      let timer;
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.proc.stdout.off("data", onData);
+        this.proc.stderr.off("data", onError);
+        this.proc.off("close", onClose);
+      };
+
+      const onData = (chunk) => {
+        buffer += chunk.toString();
+        console.log("Quit output chunk:", buffer);
+      };
+
+      const onError = (chunk) => {
+        console.error("Zingo stderr:", chunk.toString());
+      };
+
+      const onClose = (code) => {
+        cleanup();
+
+        console.log("Zingo exited with code", code);
+
+        if (code === 0) {
+          resolve({
+            message: "Quit successful",
+            output: buffer,
+          });
+        } else {
+          reject(new Error(`Zingo exited with code ${code}`));
+        }
+      };
+
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Quit command timeout"));
+      }, timeout);
+
+      this.proc.stdout.on("data", onData);
+      this.proc.stderr.on("data", onError);
+      this.proc.on("close", onClose);
+
+      this.proc.stdin.write(command + "\n");
+    });
+  }
+
   rescan(command, timeout = 10000) {
     return new Promise((resolve, reject) => {
       let buffer = "";
