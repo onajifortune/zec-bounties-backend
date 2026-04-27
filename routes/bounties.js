@@ -86,7 +86,7 @@ router.post("/", authenticate, async (req, res) => {
       },
     });
 
-    sendRealtimeUpdate("new_bounty", bounty, req.user.id);
+    sendRealtimeUpdate("new_bounties", bounty, req.user.id);
     await deleteCacheByPattern("bounties:*");
     res.status(201).json(bounty);
   } catch (err) {
