@@ -48,6 +48,54 @@ function parseZingoBalance(output) {
   return JSON.stringify(result);
 }
 
+function parseTransactionBlock(block) {
+  const root = {};
+  const stack = [{ obj: root, key: null }];
+
+  const lines = block
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(1, -1);
+
+  for (const line of lines) {
+    if (line === "{") {
+      const parent = stack[stack.length - 1];
+      const key = parent.key;
+
+      if (!Array.isArray(parent.obj[key])) {
+        parent.obj[key] = parent.obj[key] ? [parent.obj[key]] : [];
+      }
+
+      const obj = {};
+      parent.obj[key].push(obj);
+      stack.push({ obj, key: null });
+      continue;
+    }
+
+    if (line === "}") {
+      stack.pop();
+      continue;
+    }
+
+    const m = line.match(/^(.+?):\s*(.*)$/);
+    if (!m) continue;
+
+    const key = m[1].trim();
+    const raw = m[2].trim();
+    const current = stack[stack.length - 1];
+
+    if (raw === "") {
+      current.key = key;
+      current.obj[key] = current.obj[key] || {};
+    } else {
+      current.obj[key] = /^\d+$/.test(raw) ? Number(raw) : raw;
+    }
+  }
+
+  return root;
+}
+
 class ZingoProcess {
   constructor(params = {}) {
     this.zingoPath = process.env.ZINGO_CLI;
@@ -367,6 +415,60 @@ class ZingoProcess {
       const timer = setTimeout(() => {
         cleanup();
         reject(new Error("Zingo quicksend timeout"));
+      }, timeout);
+
+      this.proc.stdout.on("data", onData);
+      this.proc.stderr.on("data", onError);
+
+      this.proc.stdin.write(command + "\n");
+    });
+  }
+
+  transactions(timeout = 10000) {
+    const command = "transactions";
+    return new Promise((resolve, reject) => {
+      let buffer = "";
+
+      const onData = (chunk) => {
+        buffer += chunk.toString();
+
+        const clean = buffer.replace(/\u001b\[[0-9;]*m/g, "");
+        console.log("transactions chunk:", clean);
+
+        const blocks = clean.match(/\{\n[\s\S]*?\n\}/g) || [];
+
+        if (blocks.length > 0) {
+          cleanup();
+
+          const parsed = blocks
+            .map((block) => {
+              try {
+                return parseTransactionBlock(block); // ✅ use custom parser
+              } catch (e) {
+                console.error("Parse error:", e);
+                return null;
+              }
+            })
+            .filter(Boolean);
+
+          resolve(parsed);
+        }
+      };
+
+      const onError = (err) => {
+        cleanup();
+        reject(err);
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.proc.stdout.off("data", onData);
+        this.proc.stderr.off("data", onError);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Zingo transactions timeout"));
       }, timeout);
 
       this.proc.stdout.on("data", onData);

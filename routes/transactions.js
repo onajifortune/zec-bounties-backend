@@ -43,7 +43,7 @@ const invalidateBounty = async (bountyId) => {
 router.get("/", authenticate, isAdmin, async (req, res) => {
   const params = await getDefaultZcashParams(req.user.id);
   console.log(params);
-  const txs = await executeZingoCliTransactions("transactions", params);
+  const txs = await executeZingoCliTransactions(params);
 
   // ✅ Send transactions only to the requesting admin
   sendToUser(req.user.id, "transactions_fetched", { transactions: txs });

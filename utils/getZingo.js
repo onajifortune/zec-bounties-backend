@@ -15,9 +15,9 @@ const pool = new Map();
 
 function getZingo(params = {}) {
   const normalized = {
-    chain: params.chain || "mainnet",
-    serverUrl: params.serverUrl || "http://127.0.0.1:8137",
-    dataDir: params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino",
+    chain: params.chain || "testnet",
+    serverUrl: params.serverUrl || "https://testnet.zec.rocks:443",
+    dataDir: params.dataDir || "./backup/trash",
   };
 
   const key = zingoKey(normalized);
