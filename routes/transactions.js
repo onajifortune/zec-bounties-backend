@@ -60,7 +60,7 @@ router.get("/rescan", authenticate, isAdmin, async (req, res) => {
   if (!params) {
     await initZcashOnce((ownerId = req.user.id), (accountName = "Main"));
   }
-  await executeZingoCliQuit("quit", params);
+  // await executeZingoCliQuit("quit", params);
   await executeZingoCliRescan("rescan", params);
 
   res.json("Rescan started");
