@@ -3,7 +3,7 @@ const prisma = require("../prisma/client");
 const router = express.Router();
 const axios = require("axios");
 const { authenticate, isAdmin } = require("../middleware/auth");
-const executeZingoQuickSend = require("../utils/zingoLibQuickSend.js");
+const executeZingoQuickSend = require("../utils/zingo/zingoLibQuickSend.js");
 const { findDueBounties } = require("../helpers/db-query.js");
 const {
   buildPaymentList,
@@ -11,19 +11,20 @@ const {
   storeTransactions,
 } = require("../helpers/db-query.js");
 const { initZcashOnce } = require("../zcash/init");
-const executeZingoCli = require("../utils/zingoLib.js");
-const executeZingoCliTransactions = require("../utils/zingoLibTransactions.js");
-const executeZingoCheckBalance = require("../utils/zingoLibCheckBalance.js");
-const executeZingoCliAddresses = require("../utils/zingoLibAddresses.js");
+const executeZingoCli = require("../utils/zingo/zingoLib.js");
+const executeZingoCliTransactions = require("../utils/zingo/zingoLibTransactions.js");
+const executeZingoCheckBalance = require("../utils/zingo/zingoLibCheckBalance.js");
+const executeZingoCliAddresses = require("../utils/zingo/zingoLibAddresses.js");
 const {
   getLatestZcashParams,
   getDefaultZcashParams,
-} = require("../helpers/zcash/zcashHelper.js.js");
-const executeZingoParseAddress = require("../utils/zingoLibParseAddress.js");
-const executeZingoCliSync = require("../utils/zingoLibSync.js");
-const executeZingoCliRescan = require("../utils/zingoLibRescan.js");
-const executeZingoCliQuit = require("../utils/zingoLibQuit.js");
-const executeZingoCliBalance = require("../utils/zingoLibBalance.js");
+} = require("../helpers/zcash/zcashHelper.js");
+const executeZingoParseAddress = require("../utils/zingo/zingoLibParseAddress.js");
+const executeZingoCliSync = require("../utils/zingo/zingoLibSync.js");
+const executeZingoCliRescan = require("../utils/zingo/zingoLibRescan.js");
+const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo.js");
+const executeZingoCliQuit = require("../utils/zingo/zingoLibQuit.js");
+const executeZingoCliBalance = require("../utils/zingo/zingoLibBalance.js");
 const { resolvePayingWallet } = require("../helpers/zcash/resolvePayingWallet");
 const { buildPaymentListGrouped } = require("../helpers/db-query");
 const { delCache, deleteCacheByPattern } = require("../utils/cache");
@@ -53,6 +54,24 @@ router.get("/", authenticate, isAdmin, async (req, res) => {
     chain: params?.chain,
     serverUrl: params?.serverUrl,
   });
+});
+
+router.get("/test", async (req, res) => {
+  const params = {
+    serverUrl: "https://testnet.zec.rocks:443",
+    chain: "testnet",
+    accountName: "Main",
+    isDefault: true,
+    isTeam: false,
+    teamId: null,
+    dataDir:
+      "/Users/sntjq/Desktop/Projects/zec-bounties-hackathon/bounty-backend/wallets/cmhyplsud0002sbg4q2po7uh1/Main/testnet",
+  };
+  // await executeZingoCliQuit("quit", params);
+  const result = await executeZingoCliRecoveryInfo("recovery_info", params);
+  console.log(result);
+
+  res.json(result);
 });
 
 router.get("/rescan", authenticate, isAdmin, async (req, res) => {

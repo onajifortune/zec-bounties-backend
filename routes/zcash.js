@@ -6,7 +6,7 @@ const prisma = require("../prisma/client");
 const { authenticate, isAdmin } = require("../middleware/auth");
 const { initZcashOnce } = require("../zcash/init");
 const { zcashParams } = require("../prisma/client");
-const executeZingoCliSeed = require("../utils/zingoLibSeed");
+const executeZingoCliSeed = require("../utils/zingo/zingoLibSeed");
 const { getLatestZcashParams } = require("../helpers/zcash/zcashHelper.js");
 
 const { sendRealtimeUpdate } = require("../middleware/websocket");
@@ -487,7 +487,7 @@ router.patch("/params/:accountName", authenticate, async (req, res) => {
  */
 const { promises: fs } = require("fs");
 const path = require("path");
-const { invalidateZingo } = require("../utils/getZingo");
+const { invalidateZingo } = require("../utils/zingo/getZingo");
 
 router.delete("/params/:accountName", authenticate, async (req, res) => {
   try {

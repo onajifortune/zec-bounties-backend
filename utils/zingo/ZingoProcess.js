@@ -96,6 +96,31 @@ function parseTransactionBlock(block) {
   return root;
 }
 
+function parseRecoveryInfo(output) {
+  const match = output.match(/Wallet backup info:\s*(\{[\s\S]*?\})/);
+
+  if (!match) return null;
+
+  const result = {};
+
+  match[1]
+    .replace(/[{}]/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const idx = line.indexOf(":");
+      if (idx === -1) return;
+
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).trim();
+
+      result[key] = /^\d+$/.test(value) ? Number(value) : value;
+    });
+
+  return result;
+}
+
 class ZingoProcess {
   constructor(params = {}) {
     this.zingoPath = process.env.ZINGO_CLI;
@@ -469,6 +494,48 @@ class ZingoProcess {
       const timer = setTimeout(() => {
         cleanup();
         reject(new Error("Zingo transactions timeout"));
+      }, timeout);
+
+      this.proc.stdout.on("data", onData);
+      this.proc.stderr.on("data", onError);
+
+      this.proc.stdin.write(command + "\n");
+    });
+  }
+
+  recovery_info(command = "recovery_info", timeout = 10000) {
+    return new Promise((resolve, reject) => {
+      let buffer = "";
+
+      const onData = (chunk) => {
+        buffer += chunk.toString();
+
+        const clean = buffer.replace(/\u001b\[[0-9;]*m/g, "");
+
+        console.log("recovery_info chunk:", clean);
+
+        const parsed = parseRecoveryInfo(clean);
+
+        if (parsed) {
+          cleanup();
+          resolve(parsed);
+        }
+      };
+
+      const onError = (err) => {
+        cleanup();
+        reject(err);
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.proc.stdout.off("data", onData);
+        this.proc.stderr.off("data", onError);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Zingo recovery_info timeout"));
       }, timeout);
 
       this.proc.stdout.on("data", onData);

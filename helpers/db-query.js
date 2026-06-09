@@ -1,5 +1,5 @@
 const { PrismaClient } = require("@prisma/client");
-const executeZingoParseAddres = require("../utils/zingoLibParseAddress.js");
+const executeZingoParseAddres = require("../utils/zingo/zingoLibParseAddress.js");
 const { resolvePayingWallet } = require("./zcash/resolvePayingWallet");
 
 const prisma = new PrismaClient();
