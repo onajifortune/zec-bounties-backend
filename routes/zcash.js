@@ -8,6 +8,7 @@ const { initZcashOnce } = require("../zcash/init");
 const { zcashParams } = require("../prisma/client");
 const executeZingoCliSeed = require("../utils/zingo/zingoLibSeed");
 const { getLatestZcashParams } = require("../helpers/zcash/zcashHelper.js");
+const executeZingoCliInfo = require("../utils/zingo/zingoLibInfo");
 
 const { sendRealtimeUpdate } = require("../middleware/websocket");
 
@@ -680,40 +681,9 @@ router.post("/test-connection/:accountName", authenticate, async (req, res) => {
       });
     }
 
-    // Test connection to Zcash server
-    try {
-      const response = await axios.post(
-        params.serverUrl,
-        {
-          jsonrpc: "2.0",
-          id: "test",
-          method: "getblockchaininfo",
-          params: [],
-        },
-        {
-          timeout: 5000,
-          headers: {
-            "Content-Type": "application/json",
-          },
-        },
-      );
+    const info = await executeZingoCliInfo("info", params);
 
-      res.json({
-        success: true,
-        message: "Connection successful",
-        data: {
-          connected: true,
-          chain: response.data.result?.chain || "unknown",
-          blocks: response.data.result?.blocks || 0,
-        },
-      });
-    } catch (connectionError) {
-      res.status(503).json({
-        success: false,
-        message: "Failed to connect to Zcash server",
-        error: connectionError.message,
-      });
-    }
+    res.json(info);
   } catch (error) {
     console.error("Error testing connection:", error);
     res.status(500).json({
@@ -722,6 +692,16 @@ router.post("/test-connection/:accountName", authenticate, async (req, res) => {
       error: error.message,
     });
   }
+});
+
+router.get("/info", authenticate, isAdmin, async (req, res) => {
+  const params = await getDefaultZcashParams(req.user.id);
+  if (!params) {
+    await initZcashOnce((ownerId = req.user.id), (accountName = "Main"));
+  }
+  const info = await executeZingoCliInfo("rescan", params);
+
+  res.json(info);
 });
 
 // Error handling middleware for this router

@@ -15,6 +15,7 @@ const executeZingoCli = require("../utils/zingo/zingoLib.js");
 const executeZingoCliTransactions = require("../utils/zingo/zingoLibTransactions.js");
 const executeZingoCheckBalance = require("../utils/zingo/zingoLibCheckBalance.js");
 const executeZingoCliAddresses = require("../utils/zingo/zingoLibAddresses.js");
+const executeZingoCliTest = require("../utils/test.js");
 const {
   getLatestZcashParams,
   getDefaultZcashParams,
@@ -28,6 +29,7 @@ const executeZingoCliBalance = require("../utils/zingo/zingoLibBalance.js");
 const { resolvePayingWallet } = require("../helpers/zcash/resolvePayingWallet");
 const { buildPaymentListGrouped } = require("../helpers/db-query");
 const { delCache, deleteCacheByPattern } = require("../utils/cache");
+const executeZingoCliInfo = require("../utils/zingo/zingoLibInfo");
 
 const { sendRealtimeUpdate, sendToUser } = require("../middleware/websocket");
 
@@ -68,7 +70,7 @@ router.get("/test", async (req, res) => {
       "/Users/sntjq/Desktop/Projects/zec-bounties-hackathon/bounty-backend/wallets/cmhyplsud0002sbg4q2po7uh1/Main/testnet",
   };
   // await executeZingoCliQuit("quit", params);
-  const result = await executeZingoCliRecoveryInfo("recovery_info", params);
+  const result = await executeZingoCliInfo("info", params);
   console.log(result);
 
   res.json(result);

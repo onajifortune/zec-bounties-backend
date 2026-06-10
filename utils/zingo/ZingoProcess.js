@@ -545,6 +545,64 @@ class ZingoProcess {
     });
   }
 
+  info(command = "info", timeout = 10000) {
+    return new Promise((resolve, reject) => {
+      let buffer = "";
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.proc.stdout.off("data", onData);
+        this.proc.stderr.off("data", onError);
+      };
+
+      const tryParseJSON = (text) => {
+        const clean = text.replace(/\u001b\[[0-9;]*m/g, "");
+
+        // fast path: find first complete JSON object
+        const start = clean.indexOf("{");
+        const end = clean.lastIndexOf("}");
+
+        if (start === -1 || end === -1 || end <= start) return null;
+
+        const candidate = clean.slice(start, end + 1);
+
+        try {
+          return JSON.parse(candidate);
+        } catch {
+          return null;
+        }
+      };
+
+      const onData = (chunk) => {
+        buffer += chunk.toString();
+
+        console.log("info chunk:", chunk.toString());
+
+        const parsed = tryParseJSON(buffer);
+
+        if (parsed) {
+          cleanup();
+          resolve(parsed);
+        }
+      };
+
+      const onError = (err) => {
+        cleanup();
+        reject(new Error(`Zingo stderr error: ${err.toString?.() || err}`));
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Zingo info timeout"));
+      }, timeout);
+
+      this.proc.stdout.on("data", onData);
+      this.proc.stderr.on("data", onError);
+
+      this.proc.stdin.write(command + "\n");
+    });
+  }
+
   destroy() {
     if (this.proc && !this.proc.killed) {
       this.proc.kill();

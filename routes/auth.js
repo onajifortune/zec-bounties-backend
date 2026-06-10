@@ -393,15 +393,4 @@ async function sendRecoveryOtpEmail(email, name, otp) {
   });
 }
 
-router.get("/test-email", async (req, res) => {
-  try {
-    await sendRecoveryOtpEmail("weedkenutrof@gmail.com", "Fortune", "123456");
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json(err.message);
-  }
-});
-
 module.exports = router;
