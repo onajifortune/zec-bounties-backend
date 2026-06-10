@@ -56,24 +56,6 @@ router.get("/", authenticate, isAdmin, async (req, res) => {
   });
 });
 
-router.get("/test", async (req, res) => {
-  const params = {
-    serverUrl: "https://testnet.zec.rocks:443",
-    chain: "testnet",
-    accountName: "Main",
-    isDefault: true,
-    isTeam: false,
-    teamId: null,
-    dataDir:
-      "/Users/sntjq/Desktop/Projects/zec-bounties-hackathon/bounty-backend/wallets/cmhyplsud0002sbg4q2po7uh1/Main/testnet",
-  };
-  // await executeZingoCliQuit("quit", params);
-  const result = await executeZingoCliRecoveryInfo("recovery_info", params);
-  console.log(result);
-
-  res.json(result);
-});
-
 router.get("/rescan", authenticate, isAdmin, async (req, res) => {
   const params = await getDefaultZcashParams(req.user.id);
   if (!params) {
