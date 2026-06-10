@@ -15,7 +15,6 @@ const executeZingoCli = require("../utils/zingo/zingoLib.js");
 const executeZingoCliTransactions = require("../utils/zingo/zingoLibTransactions.js");
 const executeZingoCheckBalance = require("../utils/zingo/zingoLibCheckBalance.js");
 const executeZingoCliAddresses = require("../utils/zingo/zingoLibAddresses.js");
-const executeZingoCliTest = require("../utils/test.js");
 const {
   getLatestZcashParams,
   getDefaultZcashParams,
