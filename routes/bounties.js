@@ -56,6 +56,9 @@ router.post("/", authenticate, async (req, res) => {
       categoryId,
     } = req.body;
 
+    const resolvedAssignee = assignee === "none" ? null : assignee;
+    const isClient = req.user.role === "CLIENT";
+
     const bounty = await prisma.bounty.create({
       data: {
         title,
@@ -63,9 +66,18 @@ router.post("/", authenticate, async (req, res) => {
         bountyAmount: parseFloat(bountyAmount),
         timeToComplete: new Date(timeToComplete),
         createdBy: req.user.id,
-        assignee: assignee === "none" ? null : assignee,
+        assignee: resolvedAssignee,
         isApproved,
         categoryId,
+        // When a CLIENT creates a bounty with an assignee, add them to assignees list
+        ...(isClient &&
+          resolvedAssignee && {
+            assignees: {
+              create: {
+                userId: resolvedAssignee,
+              },
+            },
+          }),
       },
       include: {
         createdByUser: {
