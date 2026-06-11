@@ -11,6 +11,7 @@ const {
   deleteCacheByPattern,
   TTL,
 } = require("../utils/cache");
+const sendMail = require("../utils/sendMail");
 
 // ─── Reusable select shapes (avoids re-typing & keeps payloads small) ─────────
 const USER_SELECT = { id: true, name: true, avatar: true };
@@ -69,7 +70,6 @@ router.post("/", authenticate, async (req, res) => {
         assignee: resolvedAssignee,
         isApproved,
         categoryId,
-        // When a CLIENT creates a bounty with an assignee, add them to assignees list
         ...(isClient &&
           resolvedAssignee && {
             assignees: {
@@ -100,7 +100,35 @@ router.post("/", authenticate, async (req, res) => {
 
     sendRealtimeUpdate("new_bounties", bounty, req.user.id);
     await deleteCacheByPattern("bounties:*");
+
+    // Respond immediately — don't block on mail
     res.status(201).json(bounty);
+
+    // Fire-and-forget notification to all users
+    (async () => {
+      try {
+        const cachedUsers = await getCache("users:all");
+        const users =
+          cachedUsers ??
+          (await prisma.user.findMany({ select: { email: true } }));
+        const recipients = users.map((u) => u.email).filter(Boolean);
+
+        await sendMail({
+          to: recipients.join(","),
+          subject: `New Bounty Created: ${bounty.title}`,
+          text: `A new bounty has been created.\n\nTitle: ${bounty.title}\nAmount: ${bounty.bountyAmount}`,
+          html: `
+            <h2>New Bounty Created</h2>
+            <p><strong>Title:</strong> ${bounty.title}</p>
+            <p><strong>Description:</strong> ${bounty.description}</p>
+            <p><strong>Amount:</strong> ${bounty.bountyAmount} ZEC</p>
+            <p><strong>Time to complete:</strong> ${bounty.timeToComplete}</p>
+          `,
+        });
+      } catch (mailErr) {
+        console.error("Bounty notification email failed:", mailErr);
+      }
+    })();
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to create bounty" });
