@@ -1,6 +1,6 @@
 const express = require("express");
 const prisma = require("../prisma/client");
-
+const { formatEmailText } = require("../helpers/email");
 const router = express.Router();
 const { authenticate, isAdmin } = require("../middleware/auth");
 const { sendRealtimeUpdate } = require("../middleware/websocket");
@@ -118,12 +118,14 @@ router.post("/", authenticate, async (req, res) => {
           subject: `New Bounty Created: ${bounty.title}`,
           text: `A new bounty has been created.\n\nTitle: ${bounty.title}\nAmount: ${bounty.bountyAmount}`,
           html: `
-            <h2>New Bounty Created</h2>
-            <p><strong>Title:</strong> ${bounty.title}</p>
-            <p><strong>Description:</strong> ${bounty.description}</p>
-            <p><strong>Amount:</strong> ${bounty.bountyAmount} ZEC</p>
-            <p><strong>Time to complete:</strong> ${bounty.timeToComplete}</p>
-          `,
+                <h2>New Bounty Created</h2>
+                <p><strong>Title:</strong> ${bounty.title}</p>
+                <p><strong>Description:</strong><br/>
+                  ${formatEmailText(bounty.description)}
+                </p>
+                <p><strong>Amount:</strong> ${bounty.bountyAmount} ZEC</p>
+                <p><strong>Time to complete:</strong> ${bounty.timeToComplete}</p>
+            `,
         });
       } catch (mailErr) {
         console.error("Bounty notification email failed:", mailErr);
