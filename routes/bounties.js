@@ -1207,7 +1207,6 @@ router.get("/:id", async (req, res) => {
     const bountyId = req.params.id;
     const cacheKey = `bounty:${bountyId}`;
 
-    // CHECK CACHE
     const cached = await getCache(cacheKey);
     if (cached) return res.json(cached);
 
@@ -1215,13 +1214,34 @@ router.get("/:id", async (req, res) => {
       where: { id: bountyId },
       include: {
         assigneeUser: {
-          select: { id: true, name: true, email: true, z_address: true },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatar: true,
+            z_address: true,
+          },
         },
         assignees: {
           include: {
             user: {
-              select: { id: true, name: true, email: true, z_address: true },
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatar: true,
+                z_address: true,
+              },
             },
+          },
+        },
+        createdByUser: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            avatar: true,
           },
         },
       },
@@ -1229,9 +1249,7 @@ router.get("/:id", async (req, res) => {
 
     if (!bounty) return res.status(404).json({ error: "Bounty not found" });
 
-    // STORE CACHE
     await setCache(cacheKey, bounty, TTL.BOUNTY_SINGLE);
-
     res.json(bounty);
   } catch (error) {
     console.error(error);
