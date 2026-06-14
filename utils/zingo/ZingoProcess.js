@@ -19,6 +19,39 @@ function extractJson(text) {
   return null; // incomplete JSON
 }
 
+function extractJsonAddress(text) {
+  let start = text.indexOf("[");
+
+  if (start !== -1) {
+    let depth = 0;
+
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === "[") depth++;
+      else if (text[i] === "]") depth--;
+
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+
+  start = text.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}") depth--;
+
+    if (depth === 0) {
+      return text.slice(start, i + 1);
+    }
+  }
+
+  return null;
+}
+
 function parseZingoBalance(output) {
   const lines = output
     .split("\n")
@@ -254,7 +287,7 @@ class ZingoProcess {
     });
   }
 
-  send(command, timeout = 10000) {
+  sync(command, timeout = 10000) {
     return new Promise((resolve, reject) => {
       const startBufferLen = this.buffer.length;
 
@@ -313,7 +346,8 @@ class ZingoProcess {
         // Remove ANSI
         const clean = chunk.replace(/\u001b\[[0-9;]*m/g, "");
 
-        const jsonText = extractJson(clean);
+        const jsonText = extractJsonAddress(clean);
+        console.log("json", jsonText);
         if (jsonText) {
           try {
             resolve(JSON.parse(jsonText));

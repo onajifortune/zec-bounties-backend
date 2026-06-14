@@ -23,6 +23,7 @@ model User {
   role                 UserRole            @default(CLIENT)
   createdAt            DateTime            @default(now())
   z_address            String?
+  UA_address           String?
   avatar               String?
   githubId             String?
   isRobin              Boolean             @default(false)

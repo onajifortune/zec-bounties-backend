@@ -44,7 +44,6 @@ const invalidateBounty = async (bountyId) => {
 // List transactions (Admin)
 router.get("/", authenticate, isAdmin, async (req, res) => {
   const params = await getDefaultZcashParams(req.user.id);
-  console.log(params);
   const txs = await executeZingoCliTransactions(params);
 
   // ✅ Send transactions only to the requesting admin
@@ -89,7 +88,6 @@ router.get("/balance", authenticate, isAdmin, async (req, res) => {
   if (!params) {
     await initZcashOnce((ownerId = req.user.id), (accountName = "Main"));
   }
-  console.log(params);
   const data = await executeZingoCliBalance("balance", params);
 
   console.log("balance", data);
@@ -135,7 +133,7 @@ router.get("/addresses", authenticate, isAdmin, async (req, res) => {
   const addresses = await executeZingoCliAddresses("addresses", params);
 
   try {
-    const result = addresses.encoded_address;
+    const result = addresses[0].encoded_address;
     console.log("addresses", result);
 
     // ✅ Send addresses only to the requesting admin (not broadcast)
