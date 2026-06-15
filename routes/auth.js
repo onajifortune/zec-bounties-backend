@@ -5,7 +5,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const prisma = require("../prisma/client");
 const { authenticate, isAdmin } = require("../middleware/auth");
-const { verifyZaddress } = require("../helpers/db-query.js");
+const { verifyZaddress, verifyUaddress } = require("../helpers/db-query.js");
 const {
   getLatestZcashParams,
   getLatestZcashParamsForClientUser,
@@ -160,6 +160,7 @@ router.get("/me", async (req, res) => {
         role: true,
         avatar: true,
         z_address: true,
+        UA_address: true,
         isRobin: true,
       },
     });
@@ -200,7 +201,33 @@ router.post("/verify-zaddress", authenticate, async (req, res) => {
   }
 });
 
-// Add this to your auth routes file
+router.post("/verify-uaddress", authenticate, async (req, res) => {
+  try {
+    const { z_address } = req.body;
+
+    // Get params based on user role
+    let params;
+    if (req.user.role === "CLIENT") {
+      params = await getLatestZcashParamsForClientUser();
+    } else {
+      params = await getLatestZcashParams(req.user.id);
+    }
+
+    if (!params) {
+      return res.status(404).json({
+        error: "No Zcash params found. Initialize wallet first.",
+      });
+    }
+
+    const result = await verifyUaddress(z_address, params);
+    console.log("Verification result:", result);
+
+    return res.json({ isVerified: result });
+  } catch (err) {
+    console.error("Error verifying Z-address:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Check if user has Zcash params set up
 router.get("/has-zcash-params", authenticate, async (req, res) => {
@@ -359,6 +386,23 @@ router.post("/recovery/verify-otp", authenticate, async (req, res) => {
   } catch (err) {
     console.error("Recovery fetch error:", err);
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.patch("/update-ua-address", authenticate, async (req, res) => {
+  const { UA_address } = req.body;
+  if (!UA_address?.startsWith("u1")) {
+    return res.status(400).json({ error: "Invalid mainnet unified address" });
+  }
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { UA_address },
+      select: { id: true, email: true, name: true, UA_address: true },
+    });
+    res.json({ message: "Mainnet address updated", user: updatedUser });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to update UA_address" });
   }
 });
 
