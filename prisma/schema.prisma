@@ -57,6 +57,7 @@ model Bounty {
   categoryId        String?
   createdBy         String
   assignee          String?
+  chain             Chain               @default(TEST)
   difficulty        Difficulty          @default(EASY)
   assigneeUser      User?               @relation("AssignedBounties", fields: [assignee], references: [id])
   createdByUser     User                @relation("CreatedBounties", fields: [createdBy], references: [id])
@@ -203,6 +204,11 @@ enum UserRole {
   CLIENT
   ADMIN
   TEAM
+}
+
+enum Chain {
+  MAIN
+  TEST
 }
 
 enum Difficulty {

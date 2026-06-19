@@ -55,7 +55,12 @@ router.post("/", authenticate, async (req, res) => {
       assignee,
       isApproved,
       categoryId,
+      chain, // NEW
     } = req.body;
+
+    if (chain && !["MAIN", "TEST"].includes(chain)) {
+      return res.status(400).json({ error: "Invalid chain value" });
+    }
 
     const resolvedAssignee = assignee === "none" ? null : assignee;
     const isClient = req.user.role === "CLIENT";
@@ -70,6 +75,7 @@ router.post("/", authenticate, async (req, res) => {
         assignee: resolvedAssignee,
         isApproved,
         categoryId,
+        ...(chain && { chain }), // NEW — falls back to schema default (TEST) if omitted
         ...(isClient &&
           resolvedAssignee && {
             assignees: {
@@ -738,6 +744,7 @@ router.get("/users", async (req, res) => {
         email: true,
         role: true,
         z_address: true,
+        UA_address: true,
         avatar: true,
       },
     });
@@ -1260,6 +1267,13 @@ router.get("/:id", async (req, res) => {
 // ─── Edit bounty (Admin) ──────────────────────────────────────────────────────
 router.put("/:id", authenticate, isAdmin, async (req, res) => {
   try {
+    if (
+      req.body.chain !== undefined &&
+      !["MAIN", "TEST"].includes(req.body.chain)
+    ) {
+      return res.status(400).json({ error: "Invalid chain value" });
+    }
+
     const updated = await prisma.bounty.update({
       where: { id: req.params.id },
       data: {
@@ -1270,6 +1284,7 @@ router.put("/:id", authenticate, isAdmin, async (req, res) => {
           timeToComplete: req.body.timeToComplete,
         }),
         ...(req.body.assignee !== undefined && { assignee: req.body.assignee }),
+        ...(req.body.chain !== undefined && { chain: req.body.chain }), // NEW
         ...(req.body.isApproved !== undefined && {
           isApproved: req.body.isApproved,
           status: req.body.isApproved ? "IN_PROGRESS" : "CANCELLED",
