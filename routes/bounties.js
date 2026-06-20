@@ -21,6 +21,7 @@ const USER_SELECT_FULL = {
   email: true,
   avatar: true,
   z_address: true,
+  UA_address: true,
 };
 const ASSIGNEE_INCLUDE = {
   assignees: {
@@ -1221,24 +1222,12 @@ router.get("/:id", async (req, res) => {
       where: { id: bountyId },
       include: {
         assigneeUser: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            z_address: true,
-          },
+          select: USER_SELECT_FULL,
         },
         assignees: {
           include: {
             user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                avatar: true,
-                z_address: true,
-              },
+              select: USER_SELECT_FULL,
             },
           },
         },

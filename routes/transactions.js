@@ -170,6 +170,9 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
       });
     }
 
+    const bountyChainForWallet =
+      adminWallet.chain === "mainnet" ? "MAIN" : "TEST";
+
     adminWallet.dataDir = path.join(
       process.cwd(),
       "wallets",
@@ -188,10 +191,24 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
       },
       include: {
         assigneeUser: {
-          select: { id: true, name: true, z_address: true },
+          select: { id: true, name: true, z_address: true, UA_address: true },
         },
       },
     });
+
+    const chainMismatches = bounties.filter(
+      (b) => b.chain !== bountyChainForWallet,
+    );
+    if (chainMismatches.length > 0) {
+      return res.status(400).json({
+        error: `Chain mismatch: your default wallet is on ${adminWallet.chain} but ${chainMismatches.length} selected bounty/ies are on ${bountyChainForWallet === "MAIN" ? "testnet" : "mainnet"}. Switch your default wallet or deselect those bounties.`,
+        mismatched: chainMismatches.map((b) => ({
+          id: b.id,
+          title: b.title,
+          chain: b.chain,
+        })),
+      });
+    }
 
     if (bounties.length === 0) {
       return res.status(400).json({
@@ -207,17 +224,22 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
     console.log(bounties);
 
     for (const bounty of bounties) {
-      if (!bounty.assigneeUser?.z_address) {
+      const payoutAddress =
+        bounty.chain === "MAIN"
+          ? bounty.assigneeUser?.UA_address
+          : bounty.assigneeUser?.z_address;
+
+      if (!payoutAddress) {
         skipped.push({
           id: bounty.id,
           title: bounty.title,
-          reason: "Assignee has no z_address",
+          reason: `Assignee has no ${bounty.chain === "MAIN" ? "UA address" : "z_address"}`,
         });
         continue;
       }
 
       paymentList.push({
-        address: bounty.assigneeUser.z_address,
+        address: payoutAddress,
         amount: Math.round(bounty.bountyAmount * 1e8), // zatoshis
         memo: `Bounty: ${bounty.title} (ID: ${bounty.id})`,
         bountyId: bounty.id,
