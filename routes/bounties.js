@@ -988,7 +988,9 @@ router.get("/:bountyId/applications", authenticate, async (req, res) => {
     const applications = await prisma.bountyApplication.findMany({
       where: { bountyId },
       include: {
-        applicantUser: { select: { id: true, name: true, email: true } },
+        applicantUser: {
+          select: { id: true, name: true, email: true, avatar: true },
+        },
       },
       orderBy: { appliedAt: "desc" },
     });
