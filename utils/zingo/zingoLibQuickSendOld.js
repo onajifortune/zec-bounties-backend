@@ -23,7 +23,7 @@ async function executeZingoQuickSend(recipients, params) {
   const args = [
     `--chain ${params.chain || "mainnet"}`,
     `--server ${params.serverUrl || "http://127.0.0.1:8137"}`,
-    `--data-dir ${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}`,
+    `--data-dir "${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}"`,
     command,
     `'${jsonString}'`,
   ].join(" ");

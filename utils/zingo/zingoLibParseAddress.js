@@ -27,8 +27,6 @@ async function executeZingoParseAddress(zaddress, params) {
       stdio: "pipe",
     }).toString();
 
-    console.log(rawOutput);
-
     // 2️⃣ Strip ANSI color codes
     const noAnsi = rawOutput.replace(/\u001b\[[0-9;]*m/g, "");
 

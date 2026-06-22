@@ -15,7 +15,7 @@ async function executeZingoSend(params) {
 
   const args = [
     `--server ${params.server || "http://127.0.0.1:8137"}`,
-    `--data-dir ${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}`,
+    `--data-dir "${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}"`,
     command,
     params.address,
     newAmountZAts.toString(),

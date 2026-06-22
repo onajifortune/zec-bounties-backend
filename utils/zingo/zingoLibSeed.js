@@ -11,7 +11,7 @@ async function executeZingoCliSeed(params, seed, birthday) {
   const args = [
     `--chain ${params.chain || "mainnet"}`,
     `--server ${params.serverUrl || "http://127.0.0.1:8137"}`,
-    `--data-dir ${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}`,
+    `--data-dir "${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}"`,
     `--seed "${seed}"`,
     `--birthday ${birthday || 0}`,
   ].join(" ");

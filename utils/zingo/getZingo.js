@@ -20,6 +20,8 @@ function getZingo(params = {}) {
     dataDir: params.dataDir || "./backup/trash",
   };
 
+  console.log("normo", normalized);
+
   const key = zingoKey(normalized);
 
   // Reuse if exists
