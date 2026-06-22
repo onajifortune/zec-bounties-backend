@@ -14,7 +14,7 @@ async function executeZingoParseAddress(zaddress, params) {
   const args = [
     `--chain ${params.chain || "testnet"}`,
     `--server ${params.serverUrl || "https://testnet.zec.rocks:443"}`,
-    `--data-dir ${params.dataDir || "/error"}`,
+    `--data-dir "${params.dataDir || "/error"}"`,
     command,
     zaddress,
   ].join(" ");
