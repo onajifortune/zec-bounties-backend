@@ -550,7 +550,7 @@ router.post("/:id/submit", authenticate, async (req, res) => {
   }
 });
 
-// ─── Get submissions (creator / admin) ───────────────────────────────────────
+// ─── Get submissions (creator / admin / assignee) ─────────────────────────────
 router.get("/:id/submissions", authenticate, async (req, res) => {
   try {
     const { id: bountyId } = req.params;
@@ -562,14 +562,32 @@ router.get("/:id/submissions", authenticate, async (req, res) => {
       select: { id: true, createdBy: true },
     });
     if (!bounty) return res.status(404).json({ error: "Bounty not found" });
-    if (bounty.createdBy !== userId && userRole !== "ADMIN") {
+
+    const isCreatorOrAdmin =
+      bounty.createdBy === userId || userRole === "ADMIN";
+
+    // Check if the requester is an assignee (if they're not creator/admin)
+    let isAssignee = false;
+    if (!isCreatorOrAdmin) {
+      const assignee = await prisma.bountyAssignee.findUnique({
+        where: { bountyId_userId: { bountyId, userId } },
+        select: { userId: true },
+      });
+      isAssignee = !!assignee;
+    }
+
+    if (!isCreatorOrAdmin && !isAssignee) {
       return res
         .status(403)
         .json({ error: "You do not have permission to view submissions" });
     }
 
     const submissions = await prisma.workSubmission.findMany({
-      where: { bountyId },
+      where: {
+        bountyId,
+        // Assignees only see their own; creator/admin see all
+        ...(!isCreatorOrAdmin && { submittedBy: userId }),
+      },
       include: {
         submitterUser: {
           select: { id: true, name: true, email: true, avatar: true },
@@ -591,8 +609,6 @@ router.get("/:id/submissions", authenticate, async (req, res) => {
 });
 
 // ─── Review submission ────────────────────────────────────────────────────────
-// FIX: `newBountyStatus` was referenced but never declared — this was causing
-//      a ReferenceError crash on every review, forcing retries and hammering DB.
 router.patch(
   "/submissions/:submissionId/review",
   authenticate,
