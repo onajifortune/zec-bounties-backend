@@ -1156,6 +1156,7 @@ router.get("/export-payments", authenticate, isAdmin, async (req, res) => {
             name: true,
             email: true,
             z_address: true,
+            UA_address: true,
             ofacVerified: true,
           },
         },
@@ -1167,6 +1168,7 @@ router.get("/export-payments", authenticate, isAdmin, async (req, res) => {
                 name: true,
                 email: true,
                 z_address: true,
+                UA_address: true,
                 ofacVerified: true,
               },
             },
@@ -1182,6 +1184,47 @@ router.get("/export-payments", authenticate, isAdmin, async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Failed to fetch export data" });
+  }
+});
+
+router.get("/export-completed", authenticate, isAdmin, async (req, res) => {
+  try {
+    const bounties = await prisma.bounty.findMany({
+      where: { status: "DONE", chain: "MAIN" },
+      include: {
+        assigneeUser: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            z_address: true,
+            UA_address: true,
+            ofacVerified: true,
+          },
+        },
+        assignees: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                z_address: true,
+                UA_address: true,
+                ofacVerified: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { dateCreated: "desc" },
+    });
+    res.json({ success: true, data: bounties });
+  } catch (error) {
+    console.error("Error fetching completed bounties:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch completed bounties" });
   }
 });
 
