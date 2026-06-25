@@ -46,7 +46,10 @@ const invalidateApplications = async (applicantId) => {
 };
 
 const invalidateSubmissions = async (bountyId) => {
-  await delCache(`submissions:${bountyId}`);
+  await Promise.all([
+    delCache(`submissions:${bountyId}`),
+    delCache("submissions:all"),
+  ]);
 };
 
 // ─── Create bounty ────────────────────────────────────────────────────────────
@@ -624,6 +627,34 @@ router.get("/:id/submissions", authenticate, async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error("Error fetching submissions:", error);
+    res.status(500).json({ error: "Failed to fetch submissions" });
+  }
+});
+
+router.get("/submissions/all", authenticate, isAdmin, async (req, res) => {
+  try {
+    const cacheKey = "submissions:all";
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(cached);
+
+    const submissions = await prisma.workSubmission.findMany({
+      include: {
+        submitterUser: {
+          select: { id: true, name: true, email: true, avatar: true },
+        },
+      },
+      orderBy: { submittedAt: "desc" },
+    });
+
+    const result = submissions.map((s) => ({
+      ...s,
+      attachments: s.attachments ? JSON.parse(s.attachments) : [],
+    }));
+
+    await setCache(cacheKey, result, TTL.SUBMISSIONS);
+    res.json(result);
+  } catch (error) {
+    console.error("Error fetching all submissions:", error);
     res.status(500).json({ error: "Failed to fetch submissions" });
   }
 });
