@@ -571,7 +571,6 @@ router.get("/:id/submissions", authenticate, async (req, res) => {
     const isCreatorOrAdmin =
       bounty.createdBy === userId || userRole === "ADMIN";
 
-    // Check if the requester is an assignee (if they're not creator/admin)
     let isAssignee = false;
     if (!isCreatorOrAdmin) {
       const assignee = await prisma.bountyAssignee.findUnique({
@@ -587,16 +586,22 @@ router.get("/:id/submissions", authenticate, async (req, res) => {
         .json({ error: "You do not have permission to view submissions" });
     }
 
-    const cacheKey = `submissions:${bountyId}`;
+    // Only cache admin/creator view — assignee view is filtered per-user
+    // so sharing a cache key would leak data or serve wrong results
+    const cacheKey = isCreatorOrAdmin ? `submissions:${bountyId}` : null;
 
-    const cached = await getCache(cacheKey);
-
-    if (cached) return res.json(cached);
+    if (cacheKey) {
+      const cached = await getCache(cacheKey);
+      if (cached) {
+        console.log("Cache sub Hit");
+        return res.json(cached);
+      }
+      console.log("Cache sub Miss");
+    }
 
     const submissions = await prisma.workSubmission.findMany({
       where: {
         bountyId,
-        // Assignees only see their own; creator/admin see all
         ...(!isCreatorOrAdmin && { submittedBy: userId }),
       },
       include: {
@@ -612,7 +617,9 @@ router.get("/:id/submissions", authenticate, async (req, res) => {
       attachments: s.attachments ? JSON.parse(s.attachments) : [],
     }));
 
-    await setCache(cacheKey, result, TTL.SUBMISSIONS);
+    if (cacheKey) {
+      await setCache(cacheKey, result, TTL.SUBMISSIONS);
+    }
 
     res.json(result);
   } catch (error) {
@@ -746,8 +753,8 @@ router.patch(
 
       sendRealtimeUpdate("submission_reviewed", updatedSubmission, req.user.id);
       sendRealtimeUpdate("bounty_updated", updatedBounty, req.user.id);
-      await invalidateBounty(submission.bounty.id);
       await invalidateSubmissions(submission.bounty.id);
+      await invalidateBounty(submission.bounty.id);
 
       res.json({
         message: "Submission reviewed successfully",
@@ -1003,7 +1010,10 @@ router.get("/:bountyId/applications", authenticate, async (req, res) => {
 
     const cached = await getCache(cacheKey);
 
-    if (cached) return res.json(cached);
+    if (cached) {
+      console.log("App Hit");
+      return res.json(cached);
+    }
 
     const applications = await prisma.bountyApplication.findMany({
       where: { bountyId },
