@@ -20,6 +20,7 @@ model User {
   name                 String
   email                String              @unique
   password             String?
+  nickname             String?
   role                 UserRole            @default(CLIENT)
   createdAt            DateTime            @default(now())
   z_address            String?

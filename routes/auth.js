@@ -12,6 +12,9 @@ const {
 } = require("../helpers/zcash/zcashHelper.js");
 const sendMail = require("../utils/sendMail");
 const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo");
+const { delCache } = require("../utils/cache");
+const { sendRealtimeUpdate } = require("../middleware/websocket");
+
 // const { isSaplingZcashAddress } = require("../utils/zingo/zingoLib/parseAddresses");
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET;
@@ -156,6 +159,7 @@ router.get("/me", async (req, res) => {
       select: {
         id: true,
         name: true,
+        nickname: true,
         email: true,
         role: true,
         avatar: true,
@@ -266,7 +270,13 @@ router.patch("/update-zaddress", authenticate, async (req, res) => {
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
       data: { z_address },
-      select: { id: true, email: true, name: true, z_address: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        nickname: true,
+        z_address: true,
+      },
     });
 
     res.json({ message: "Z-address updated successfully", user: updatedUser });
@@ -398,11 +408,54 @@ router.patch("/update-ua-address", authenticate, async (req, res) => {
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
       data: { UA_address },
-      select: { id: true, email: true, name: true, UA_address: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        nickname: true,
+        UA_address: true,
+      },
     });
     res.json({ message: "Mainnet address updated", user: updatedUser });
   } catch (error) {
     res.status(500).json({ error: "Failed to update UA_address" });
+  }
+});
+
+router.patch("/update-nickname", authenticate, async (req, res) => {
+  try {
+    const { nickname } = req.body;
+
+    if (nickname && nickname.trim().length > 32) {
+      return res
+        .status(400)
+        .json({ error: "Nickname must be 32 characters or fewer" });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { nickname: nickname?.trim() || null },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        avatar: true,
+        nickname: true,
+        isRobin: true,
+        isManOfSteel: true,
+        z_address: true,
+        UA_address: true,
+      },
+    });
+
+    await delCache("users:all");
+    sendRealtimeUpdate("user_updated", updated, req.user.id);
+
+    res.json({ user: updated });
+  } catch (error) {
+    console.error("Failed to update nickname:", error);
+    res.status(500).json({ error: "Failed to update nickname" });
   }
 });
 
