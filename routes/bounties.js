@@ -34,6 +34,7 @@ const invalidateBounty = async (bountyId) => {
   await Promise.all([
     delCache(`bounty:${bountyId}`),
     delCache(`assignees:${bountyId}`),
+    delCache("stats:totals"),
     deleteCacheByPattern("bounties:*"),
   ]);
 };
@@ -1301,12 +1302,14 @@ router.get("/stats/totals", async (req, res) => {
     const [totalAmountResult, countResult] = await Promise.all([
       // Sum ALL bounty amounts — no pagination, one DB round-trip
       prisma.bounty.aggregate({
+        where: { chain: "MAIN" },
         _sum: { bountyAmount: true },
         _count: { id: true },
       }),
       // Separate counts per status so the dashboard can show accurate numbers
       prisma.bounty.groupBy({
         by: ["status"],
+        where: { chain: "MAIN" },
         _count: { id: true },
       }),
     ]);
