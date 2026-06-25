@@ -45,6 +45,10 @@ const invalidateApplications = async (applicantId) => {
   ]);
 };
 
+const invalidateSubmissions = async (bountyId) => {
+  await delCache(`submissions:${bountyId}`);
+};
+
 // ─── Create bounty ────────────────────────────────────────────────────────────
 router.post("/", authenticate, async (req, res) => {
   try {
@@ -536,6 +540,7 @@ router.post("/:id/submit", authenticate, async (req, res) => {
 
     sendRealtimeUpdate("work_submitted", workSubmission, userId);
     sendRealtimeUpdate("bounty_updated", updatedBounty, userId);
+    await invalidateSubmissions(bountyId);
 
     res.json({
       message: "Work submitted successfully",
@@ -582,6 +587,12 @@ router.get("/:id/submissions", authenticate, async (req, res) => {
         .json({ error: "You do not have permission to view submissions" });
     }
 
+    const cacheKey = `submissions:${bountyId}`;
+
+    const cached = await getCache(cacheKey);
+
+    if (cached) return res.json(cached);
+
     const submissions = await prisma.workSubmission.findMany({
       where: {
         bountyId,
@@ -596,12 +607,14 @@ router.get("/:id/submissions", authenticate, async (req, res) => {
       orderBy: { submittedAt: "desc" },
     });
 
-    res.json(
-      submissions.map((s) => ({
-        ...s,
-        attachments: s.attachments ? JSON.parse(s.attachments) : [],
-      })),
-    );
+    const result = submissions.map((s) => ({
+      ...s,
+      attachments: s.attachments ? JSON.parse(s.attachments) : [],
+    }));
+
+    await setCache(cacheKey, result, TTL.SUBMISSIONS);
+
+    res.json(result);
   } catch (error) {
     console.error("Error fetching submissions:", error);
     res.status(500).json({ error: "Failed to fetch submissions" });
@@ -734,6 +747,7 @@ router.patch(
       sendRealtimeUpdate("submission_reviewed", updatedSubmission, req.user.id);
       sendRealtimeUpdate("bounty_updated", updatedBounty, req.user.id);
       await invalidateBounty(submission.bounty.id);
+      await invalidateSubmissions(submission.bounty.id);
 
       res.json({
         message: "Submission reviewed successfully",
@@ -985,6 +999,12 @@ router.get("/:bountyId/applications", authenticate, async (req, res) => {
       return res.status(403).json({ error: "Access denied" });
     }
 
+    const cacheKey = `applications:bounty:${bountyId}`;
+
+    const cached = await getCache(cacheKey);
+
+    if (cached) return res.json(cached);
+
     const applications = await prisma.bountyApplication.findMany({
       where: { bountyId },
       include: {
@@ -994,6 +1014,8 @@ router.get("/:bountyId/applications", authenticate, async (req, res) => {
       },
       orderBy: { appliedAt: "desc" },
     });
+
+    await setCache(cacheKey, applications, TTL.APPLICATIONS);
     res.json(applications);
   } catch (err) {
     console.error(err);

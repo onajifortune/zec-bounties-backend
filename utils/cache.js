@@ -8,7 +8,7 @@ const TTL = {
   USERS: 120, // ← add
   ASSIGNEES: 60, // ← add
   APPLICATIONS: 30, // ← add
-  SUBMISSIONS: 30, // ← add
+  SUBMISSIONS: 300, // ← add
   BALANCE: 15, // ← add (changes frequently)
   ADDRESSES: 120, // ← add
 };
