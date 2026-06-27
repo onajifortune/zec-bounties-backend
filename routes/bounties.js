@@ -39,17 +39,19 @@ const invalidateBounty = async (bountyId) => {
   ]);
 };
 
-const invalidateApplications = async (applicantId) => {
+const invalidateApplications = async (applicantId, bountyId) => {
   await Promise.all([
     delCache(`applications:user:${applicantId}`),
     delCache("applications:all"),
+    ...(bountyId ? [delCache(`applications:bounty:${bountyId}`)] : []),
   ]);
 };
 
-const invalidateSubmissions = async (bountyId) => {
+const invalidateSubmissions = async (bountyId, submittedBy) => {
   await Promise.all([
     delCache(`submissions:${bountyId}`),
     delCache("submissions:all"),
+    ...(submittedBy ? [delCache(`submissions:user:${submittedBy}`)] : []),
   ]);
 };
 
@@ -544,7 +546,7 @@ router.post("/:id/submit", authenticate, async (req, res) => {
 
     sendRealtimeUpdate("work_submitted", workSubmission, userId);
     sendRealtimeUpdate("bounty_updated", updatedBounty, userId);
-    await invalidateSubmissions(bountyId);
+    await invalidateSubmissions(bountyId, userId);
 
     res.json({
       message: "Work submitted successfully",
@@ -556,6 +558,36 @@ router.post("/:id/submit", authenticate, async (req, res) => {
     res
       .status(500)
       .json({ error: "Failed to submit work", details: error.message });
+  }
+});
+
+router.get("/my-submissions", authenticate, async (req, res) => {
+  try {
+    const cacheKey = `submissions:user:${req.user.id}`;
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(cached);
+
+    const submissions = await prisma.workSubmission.findMany({
+      where: { submittedBy: req.user.id },
+      include: {
+        bounty: {
+          select: {
+            id: true,
+            title: true,
+            bountyAmount: true,
+            status: true,
+            timeToComplete: true,
+          },
+        },
+      },
+      orderBy: { submittedAt: "desc" },
+    });
+
+    await setCache(cacheKey, submissions, TTL.SUBMISSIONS);
+    res.json(submissions);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -785,7 +817,7 @@ router.patch(
 
       sendRealtimeUpdate("submission_reviewed", updatedSubmission, req.user.id);
       sendRealtimeUpdate("bounty_updated", updatedBounty, req.user.id);
-      await invalidateSubmissions(submission.bounty.id);
+      await invalidateSubmissions(submission.bounty.id, submission.submittedBy);
       await invalidateBounty(submission.bounty.id);
 
       res.json({
@@ -1112,7 +1144,10 @@ router.put(
         }
         return updated;
       });
-      await invalidateApplications(application.applicantId);
+      await invalidateApplications(
+        application.applicantId,
+        application.bountyId,
+      );
       await invalidateBounty(application.bountyId);
 
       sendRealtimeUpdate("application_updated", result, req.user.id);
@@ -1146,7 +1181,10 @@ router.delete(
           .json({ error: "Cannot withdraw a reviewed application" });
 
       await prisma.bountyApplication.delete({ where: { id: applicationId } });
-      await invalidateApplications(application.applicantId);
+      await invalidateApplications(
+        application.applicantId,
+        application.bountyId,
+      );
       await invalidateBounty(application.bountyId);
       sendRealtimeUpdate(
         "application_deleted",
@@ -1322,6 +1360,7 @@ router.get("/stats/totals", async (req, res) => {
     const result = {
       totalBountyAmount: totalAmountResult._sum.bountyAmount ?? 0,
       totalBountyCount: totalAmountResult._count.id,
+      activeAmount: activeAmountResult._sum.bountyAmount ?? 0,
       statusCounts,
     };
 
