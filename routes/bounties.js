@@ -1360,7 +1360,6 @@ router.get("/stats/totals", async (req, res) => {
     const result = {
       totalBountyAmount: totalAmountResult._sum.bountyAmount ?? 0,
       totalBountyCount: totalAmountResult._count.id,
-      activeAmount: activeAmountResult._sum.bountyAmount ?? 0,
       statusCounts,
     };
 
