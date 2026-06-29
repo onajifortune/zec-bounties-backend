@@ -885,6 +885,7 @@ router.patch("/switch-role", authenticate, async (req, res) => {
         isRobin: true,
         isManOfSteel: true,
         z_address: true,
+        UA_address: true,
       },
     });
     await delCache("users:all");

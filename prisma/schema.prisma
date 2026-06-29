@@ -58,7 +58,7 @@ model Bounty {
   categoryId        String?
   createdBy         String
   assignee          String?
-  chain             Chain               @default(TEST)
+  chain             Chain               @default(MAIN)
   difficulty        Difficulty          @default(EASY)
   assigneeUser      User?               @relation("AssignedBounties", fields: [assignee], references: [id])
   createdByUser     User                @relation("CreatedBounties", fields: [createdBy], references: [id])
