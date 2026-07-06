@@ -133,9 +133,10 @@ router.post("/", authenticate, async (req, res) => {
         await sendMail({
           to: recipients.join(","),
           subject: `New Bounty Created: ${bounty.title}`,
-          text: `A new bounty has been created.\n\nTitle: ${bounty.title}\nAmount: ${bounty.bountyAmount}`,
+          text: `A new bounty has been created.\n\nCreated by: ${bounty.createdByUser.name}\n\nTitle: ${bounty.title}\nAmount: ${bounty.bountyAmount}`,
           html: `
                 <h2>New Bounty Created</h2>
+                <p><strong>Created by:</strong> ${bounty.createdByUser.name}</p>
                 <p><strong>Title:</strong> ${bounty.title}</p>
                 <p><strong>Description:</strong><br/>
                   ${formatEmailText(bounty.description)}
