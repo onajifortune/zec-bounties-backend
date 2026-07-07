@@ -92,17 +92,10 @@ router.get("/balance", authenticate, isAdmin, async (req, res) => {
 
   console.log("balance", data);
 
-  let balance;
-  if (params.chain === "testnet") {
-    balance = data.confirmed_orchard_balance;
-  } else if (params.chain === "mainnet") {
-    balance = data.confirmed_sapling_balance;
-  }
-
   // ✅ Send balance only to the requesting admin (not broadcast)
-  sendToUser(req.user.id, "balance_fetched", { balance });
+  sendToUser(req.user.id, "balance_fetched", { balance: data });
 
-  res.json(balance);
+  res.json(data);
 });
 
 router.post("/accounts", authenticate, async (req, res) => {

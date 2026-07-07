@@ -32,3 +32,4 @@ utils/test.js
 routes/.DS_Store
 
 restore.md
+.zingo-cli
