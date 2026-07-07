@@ -128,7 +128,11 @@ router.post("/", authenticate, async (req, res) => {
         const users =
           cachedUsers ??
           (await prisma.user.findMany({ select: { email: true } }));
-        const recipients = users.map((u) => u.email).filter(Boolean);
+
+        const recipients = users
+          .filter((u) => u.emailNotifications !== false)
+          .map((u) => u.email)
+          .filter(Boolean);
 
         await sendMail({
           to: recipients.join(","),
@@ -849,6 +853,7 @@ router.get("/users", async (req, res) => {
         z_address: true,
         UA_address: true,
         avatar: true,
+        emailNotifications: true,
       },
     });
     await setCache(cacheKey, users, TTL.USERS);

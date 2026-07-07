@@ -166,6 +166,7 @@ router.get("/me", async (req, res) => {
         z_address: true,
         UA_address: true,
         isRobin: true,
+        emailNotifications: true,
       },
     });
 
@@ -174,6 +175,42 @@ router.get("/me", async (req, res) => {
     return res.json({ user });
   } catch (err) {
     return res.status(401).json({ error: "Invalid or expired token" });
+  }
+});
+
+router.patch("/update-email-notifications", authenticate, async (req, res) => {
+  try {
+    const { emailNotifications } = req.body;
+    if (typeof emailNotifications !== "boolean") {
+      return res
+        .status(400)
+        .json({ error: "emailNotifications must be a boolean" });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { emailNotifications },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        avatar: true,
+        nickname: true,
+        isRobin: true,
+        isManOfSteel: true,
+        z_address: true,
+        UA_address: true,
+        emailNotifications: true,
+      },
+    });
+
+    await delCache("users:all");
+    sendRealtimeUpdate("user_updated", updated, req.user.id);
+    res.json({ user: updated });
+  } catch (error) {
+    console.error("Failed to update email notifications:", error);
+    res.status(500).json({ error: "Failed to update preference" });
   }
 });
 
@@ -446,6 +483,7 @@ router.patch("/update-nickname", authenticate, async (req, res) => {
         isManOfSteel: true,
         z_address: true,
         UA_address: true,
+        emailNotifications: true,
       },
     });
 

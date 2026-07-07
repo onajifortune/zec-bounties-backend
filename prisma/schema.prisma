@@ -19,6 +19,7 @@ model User {
   id                   String              @id @default(cuid())
   name                 String
   email                String              @unique
+  emailNotifications   Boolean             @default(true)
   password             String?
   nickname             String?
   role                 UserRole            @default(CLIENT)
