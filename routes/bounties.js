@@ -127,28 +127,34 @@ router.post("/", authenticate, async (req, res) => {
         const cachedUsers = await getCache("users:all");
         const users =
           cachedUsers ??
-          (await prisma.user.findMany({ select: { email: true } }));
+          (await prisma.user.findMany({
+            select: { email: true, emailNotifications: true },
+          }));
 
         const recipients = users
           .filter((u) => u.emailNotifications !== false)
           .map((u) => u.email)
           .filter(Boolean);
 
-        await sendMail({
-          to: recipients.join(","),
-          subject: `New Bounty Created: ${bounty.title}`,
-          text: `A new bounty has been created.\n\nCreated by: ${bounty.createdByUser.name}\n\nTitle: ${bounty.title}\nAmount: ${bounty.bountyAmount}`,
-          html: `
-                <h2>New Bounty Created</h2>
-                <p><strong>Created by:</strong> ${bounty.createdByUser.name}</p>
-                <p><strong>Title:</strong> ${bounty.title}</p>
-                <p><strong>Description:</strong><br/>
-                  ${formatEmailText(bounty.description)}
-                </p>
-                <p><strong>Amount:</strong> ${bounty.bountyAmount} ZEC</p>
-                <p><strong>Time to complete:</strong> ${bounty.timeToComplete}</p>
-            `,
-        });
+        await Promise.all(
+          recipients.map((recipient) =>
+            sendMail({
+              to: recipient,
+              subject: `New Bounty Created: ${bounty.title}`,
+              text: `A new bounty has been created.\n\nCreated by: ${bounty.createdByUser.name}\n\nTitle: ${bounty.title}\nAmount: ${bounty.bountyAmount}`,
+              html: `
+            <h2>New Bounty Created</h2>
+            <p><strong>Created by:</strong> ${bounty.createdByUser.name}</p>
+            <p><strong>Title:</strong> ${bounty.title}</p>
+            <p><strong>Description:</strong><br/>
+              ${formatEmailText(bounty.description)}
+            </p>
+            <p><strong>Amount:</strong> ${bounty.bountyAmount} ZEC</p>
+            <p><strong>Time to complete:</strong> ${bounty.timeToComplete}</p>
+          `,
+            }),
+          ),
+        );
       } catch (mailErr) {
         console.error("Bounty notification email failed:", mailErr);
       }
