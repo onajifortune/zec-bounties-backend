@@ -672,13 +672,13 @@ router.get("/:teamId/wallet/balance", authenticate, async (req, res) => {
     const params = buildTeamParams(teamId, wallet);
     const data = await executeZingoCliBalance("balance", params);
 
-    const balance =
-      wallet.chain === "testnet"
-        ? data.confirmed_orchard_balance
-        : data.confirmed_sapling_balance;
+    // const balance =
+    //   wallet.chain === "testnet"
+    //     ? data.confirmed_orchard_balance
+    //     : data.confirmed_sapling_balance;
 
-    sendToUser(req.user.id, "team_balance_fetched", { teamId, balance });
-    res.json({ success: true, balance });
+    sendToUser(req.user.id, "team_balance_fetched", { teamId, balance: data });
+    res.json({ success: true, balance: data });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch team wallet balance" });

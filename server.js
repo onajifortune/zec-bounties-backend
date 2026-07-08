@@ -35,6 +35,7 @@ app.use("/api/bounties", require("./routes/bounties"));
 app.use("/api/transactions", require("./routes/transactions"));
 app.use("/api/zcash", require("./routes/zcash"));
 app.use("/api/teams", require("./routes/teams"));
+app.use("/api/kpis", require("./routes/kpis"));
 
 // WebSocket server
 const wss = new WebSocketServer({ server });
