@@ -2,6 +2,7 @@ const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const router = express.Router();
 const { authenticate, isAdmin } = require("../middleware/auth");
+const { delCache } = require("../utils/cache");
 const prisma = new PrismaClient();
 
 // Helper function to generate paidAt filter based on timeRange
