@@ -27,11 +27,22 @@ function getPaidAtFilter(timeRange) {
   };
 }
 
+// Resolves the `chain` query param into a Prisma where-clause fragment.
+// - "TEST" -> testnet only
+// - "ALL"  -> no filter, both chains
+// - anything else (including missing/undefined) -> "MAIN" (preserves existing default behavior)
+function getChainFilter(chain) {
+  if (chain === "TEST") return { chain: "TEST" };
+  if (chain === "ALL") return {};
+  return { chain: "MAIN" };
+}
+
 router.get("/top-contributors", async (req, res) => {
   try {
     const showAll = req.query.all === "true";
     const timeRange = req.query.timeRange || "all";
     const paidAtFilter = getPaidAtFilter(timeRange);
+    const chainFilter = getChainFilter(req.query.chain);
 
     if (showAll) {
       // ==================== SHOW ALL USERS ====================
@@ -78,6 +89,7 @@ router.get("/top-contributors", async (req, res) => {
       const userBounties = await prisma.bounty.findMany({
         where: {
           assignee: { not: null },
+          ...chainFilter,
           ...paidAtFilter,
         },
         select: {
@@ -108,6 +120,7 @@ router.get("/top-contributors", async (req, res) => {
     const bounties = await prisma.bounty.findMany({
       where: {
         assignee: { not: null },
+        ...chainFilter,
         ...paidAtFilter,
       },
       select: {
@@ -188,9 +201,12 @@ router.get("/top-contributors", async (req, res) => {
 // GET /api/kpis/contributors-over-time
 router.get("/contributors-over-time", async (req, res) => {
   try {
+    const chainFilter = getChainFilter(req.query.chain);
+
     const paidBounties = await prisma.bounty.findMany({
       where: {
         status: "DONE",
+        ...chainFilter,
         paidAt: { not: null },
       },
       select: {
@@ -238,10 +254,12 @@ router.get("/average-earnings-over-time", async (req, res) => {
   try {
     const timeRange = req.query.timeRange || "all";
     const paidAtFilter = getPaidAtFilter(timeRange);
+    const chainFilter = getChainFilter(req.query.chain);
 
     const paidBounties = await prisma.bounty.findMany({
       where: {
         status: "DONE",
+        ...chainFilter,
         paidAt: { not: null },
         ...paidAtFilter,
       },
@@ -337,9 +355,12 @@ router.patch("/users/:id/badges", authenticate, isAdmin, async (req, res) => {
 // GET /api/kpis/bounty-types-over-time
 router.get("/bounty-types-over-time", async (req, res) => {
   try {
+    const chainFilter = getChainFilter(req.query.chain);
+
     const bounties = await prisma.bounty.findMany({
       where: {
         category: { isNot: null },
+        ...chainFilter,
       },
       select: {
         dateCreated: true,
