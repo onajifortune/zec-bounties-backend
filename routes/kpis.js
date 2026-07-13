@@ -207,7 +207,7 @@ router.get("/contributors-over-time", async (req, res) => {
       where: {
         status: "DONE",
         ...chainFilter,
-        // paidAt: { not: null },
+        paidAt: { not: null },
       },
       select: {
         paidAt: true,
@@ -260,7 +260,7 @@ router.get("/average-earnings-over-time", async (req, res) => {
       where: {
         status: "DONE",
         ...chainFilter,
-        // paidAt: { not: null },
+        paidAt: { not: null },
         ...paidAtFilter,
       },
       select: {
