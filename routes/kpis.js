@@ -242,6 +242,8 @@ router.get("/contributors-over-time", async (req, res) => {
       });
     });
 
+    console.log(result);
+
     res.json(result);
   } catch (error) {
     console.error("Error in /contributors-over-time:", error);
