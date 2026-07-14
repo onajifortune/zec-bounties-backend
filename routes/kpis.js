@@ -40,6 +40,46 @@ router.get("/top-contributors", async (req, res) => {
     const completedAtFilter = getCompletedAtFilter(timeRange);
     const chainFilter = getChainFilter(req.query.chain);
 
+    // submitted = how many times a user submitted work, grouped by submitter,
+    // scoped to chain via the related bounty. NOT time-filtered — lifetime count,
+    // same semantics as before. NOT deduped per bounty — each submission event counts.
+    const submissionGroups = await prisma.workSubmission.groupBy({
+      by: ["submittedBy"],
+      _count: { _all: true },
+      where: {
+        bounty: { ...chainFilter },
+      },
+    });
+    const submittedMap = new Map(
+      submissionGroups.map((g) => [g.submittedBy, g._count._all]),
+    );
+
+    const buildUserEntry = (user) => {
+      const hasUA = !!user.UA_address;
+      const hasZ = !!user.z_address;
+      let addressType = "None";
+      if (hasUA && hasZ) addressType = "UA + z";
+      else if (hasUA) addressType = "UA only";
+      else if (hasZ) addressType = "Sapling";
+
+      const userBadges = Array.isArray(user.badges) ? [...user.badges] : [];
+      if (user.role === "ADMIN") {
+        if (!userBadges.includes("dao-member")) userBadges.push("dao-member");
+        if (!userBadges.includes("admin")) userBadges.push("admin");
+      }
+
+      return {
+        id: user.id,
+        name: user.name || "Unknown",
+        avatar: user.avatar || null,
+        addressType,
+        badges: userBadges,
+        completed: 0,
+        submitted: submittedMap.get(user.id) || 0,
+        totalEarned: 0,
+      };
+    };
+
     if (showAll) {
       const allUsers = await prisma.user.findMany({
         select: {
@@ -54,41 +94,10 @@ router.get("/top-contributors", async (req, res) => {
       });
 
       const userMap = new Map();
-      allUsers.forEach((u) => {
-        const hasUA = !!u.UA_address;
-        const hasZ = !!u.z_address;
-        let addressType = "None";
-        if (hasUA && hasZ) addressType = "UA + z";
-        else if (hasUA) addressType = "UA only";
-        else if (hasZ) addressType = "Sapling";
+      allUsers.forEach((u) => userMap.set(u.id, buildUserEntry(u)));
 
-        const userBadges = Array.isArray(u.badges) ? [...u.badges] : [];
-        if (u.role === "ADMIN") {
-          if (!userBadges.includes("dao-member")) userBadges.push("dao-member");
-          if (!userBadges.includes("admin")) userBadges.push("admin");
-        }
-
-        userMap.set(u.id, {
-          id: u.id,
-          name: u.name || "Unknown",
-          avatar: u.avatar || null,
-          addressType,
-          badges: userBadges,
-          completed: 0,
-          submitted: 0,
-          totalEarned: 0,
-        });
-      });
-
-      // NOTE: submitted count intentionally NOT time/completedAt-filtered —
-      // it reflects total assignment volume regardless of when/whether
-      // the work finished. Only "completed" and "totalEarned" respect
-      // the completedAt-based time range, since those describe finished work.
       const userBounties = await prisma.bounty.findMany({
-        where: {
-          assignee: { not: null },
-          ...chainFilter,
-        },
+        where: { assignee: { not: null }, ...chainFilter },
         select: {
           assignee: true,
           status: true,
@@ -100,18 +109,14 @@ router.get("/top-contributors", async (req, res) => {
       userBounties.forEach((bounty) => {
         const stats = userMap.get(bounty.assignee);
         if (!stats) return;
-        stats.submitted += 1;
 
         const isCompleted = bounty.status === "DONE" && bounty.completedAt;
         if (!isCompleted) return;
-
-        // Apply the time-range filter only to completion-based stats
-        if (completedAtFilter.completedAt) {
-          if (
-            new Date(bounty.completedAt) < completedAtFilter.completedAt.gte
-          ) {
-            return;
-          }
+        if (
+          completedAtFilter.completedAt &&
+          new Date(bounty.completedAt) < completedAtFilter.completedAt.gte
+        ) {
+          return;
         }
 
         stats.completed += 1;
@@ -126,10 +131,7 @@ router.get("/top-contributors", async (req, res) => {
 
     // ==================== NORMAL TOP CONTRIBUTORS (Top 25) ====================
     const bounties = await prisma.bounty.findMany({
-      where: {
-        assignee: { not: null },
-        ...chainFilter,
-      },
+      where: { assignee: { not: null }, ...chainFilter },
       select: {
         assignee: true,
         status: true,
@@ -153,52 +155,47 @@ router.get("/top-contributors", async (req, res) => {
 
     bounties.forEach((bounty) => {
       if (!bounty.assigneeUser) return;
-
       const userId = bounty.assigneeUser.id;
 
       if (!userStats.has(userId)) {
-        const hasUA = !!bounty.assigneeUser.UA_address;
-        const hasZ = !!bounty.assigneeUser.z_address;
-        let addressType = "None";
-        if (hasUA && hasZ) addressType = "UA + z";
-        else if (hasUA) addressType = "UA only";
-        else if (hasZ) addressType = "Sapling";
-
-        const userBadges = Array.isArray(bounty.assigneeUser.badges)
-          ? [...bounty.assigneeUser.badges]
-          : [];
-        if (bounty.assigneeUser.role === "ADMIN") {
-          if (!userBadges.includes("dao-member")) userBadges.push("dao-member");
-          if (!userBadges.includes("admin")) userBadges.push("admin");
-        }
-
-        userStats.set(userId, {
-          id: userId,
-          name: bounty.assigneeUser.name || "Unknown",
-          avatar: bounty.assigneeUser.avatar || null,
-          addressType,
-          badges: userBadges,
-          completed: 0,
-          submitted: 0,
-          totalEarned: 0,
-        });
+        userStats.set(userId, buildUserEntry(bounty.assigneeUser));
       }
 
       const stats = userStats.get(userId);
-      stats.submitted += 1;
-
       const isCompleted = bounty.status === "DONE" && bounty.completedAt;
       if (!isCompleted) return;
-
-      if (completedAtFilter.completedAt) {
-        if (new Date(bounty.completedAt) < completedAtFilter.completedAt.gte) {
-          return;
-        }
+      if (
+        completedAtFilter.completedAt &&
+        new Date(bounty.completedAt) < completedAtFilter.completedAt.gte
+      ) {
+        return;
       }
 
       stats.completed += 1;
       stats.totalEarned += bounty.bountyAmount || 0;
     });
+
+    // Users who submitted work but were never the final `assignee` on a bounty
+    // (e.g. lost the slot in a multi-assignee bounty) would otherwise be
+    // invisible here despite having a real submitted count.
+    const missingSubmitterIds = [...submittedMap.keys()].filter(
+      (id) => !userStats.has(id),
+    );
+    if (missingSubmitterIds.length > 0) {
+      const missingUsers = await prisma.user.findMany({
+        where: { id: { in: missingSubmitterIds } },
+        select: {
+          id: true,
+          name: true,
+          avatar: true,
+          UA_address: true,
+          z_address: true,
+          role: true,
+          badges: true,
+        },
+      });
+      missingUsers.forEach((u) => userStats.set(u.id, buildUserEntry(u)));
+    }
 
     const sorted = Array.from(userStats.values())
       .sort((a, b) => b.completed - a.completed)
