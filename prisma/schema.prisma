@@ -68,12 +68,15 @@ model Bounty {
   applications      BountyApplication[]
   workSubmissions   WorkSubmission[]
   assignees         BountyAssignee[]
+  completedAt       DateTime?
+  updatedAt         DateTime  @updatedAt @default(now())
   
   @@index([status])
   @@index([createdBy])
   @@index([assignee])
   @@index([dateCreated])
   @@index([isPaid, paidAt])
+  @@index([completedAt])
 }
 
 model BountyAssignee {

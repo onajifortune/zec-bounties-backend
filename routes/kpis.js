@@ -5,8 +5,8 @@ const { authenticate, isAdmin } = require("../middleware/auth");
 const { delCache } = require("../utils/cache");
 const prisma = new PrismaClient();
 
-// Helper function to generate paidAt filter based on timeRange
-function getPaidAtFilter(timeRange) {
+// Helper function to generate completedAt filter based on timeRange
+function getCompletedAtFilter(timeRange) {
   if (!timeRange || timeRange === "all") {
     return {};
   }
@@ -20,17 +20,13 @@ function getPaidAtFilter(timeRange) {
     return {};
   }
   return {
-    paidAt: {
+    completedAt: {
       gte: fromDate,
       not: null,
     },
   };
 }
 
-// Resolves the `chain` query param into a Prisma where-clause fragment.
-// - "TEST" -> testnet only
-// - "ALL"  -> no filter, both chains
-// - anything else (including missing/undefined) -> "MAIN" (preserves existing default behavior)
 function getChainFilter(chain) {
   if (chain === "TEST") return { chain: "TEST" };
   if (chain === "ALL") return {};
@@ -41,11 +37,10 @@ router.get("/top-contributors", async (req, res) => {
   try {
     const showAll = req.query.all === "true";
     const timeRange = req.query.timeRange || "all";
-    const paidAtFilter = getPaidAtFilter(timeRange);
+    const completedAtFilter = getCompletedAtFilter(timeRange);
     const chainFilter = getChainFilter(req.query.chain);
 
     if (showAll) {
-      // ==================== SHOW ALL USERS ====================
       const allUsers = await prisma.user.findMany({
         select: {
           id: true,
@@ -67,7 +62,6 @@ router.get("/top-contributors", async (req, res) => {
         else if (hasUA) addressType = "UA only";
         else if (hasZ) addressType = "Sapling";
 
-        // === BADGE LOGIC ===
         const userBadges = Array.isArray(u.badges) ? [...u.badges] : [];
         if (u.role === "ADMIN") {
           if (!userBadges.includes("dao-member")) userBadges.push("dao-member");
@@ -86,17 +80,20 @@ router.get("/top-contributors", async (req, res) => {
         });
       });
 
+      // NOTE: submitted count intentionally NOT time/completedAt-filtered —
+      // it reflects total assignment volume regardless of when/whether
+      // the work finished. Only "completed" and "totalEarned" respect
+      // the completedAt-based time range, since those describe finished work.
       const userBounties = await prisma.bounty.findMany({
         where: {
           assignee: { not: null },
           ...chainFilter,
-          ...paidAtFilter,
         },
         select: {
           assignee: true,
           status: true,
           bountyAmount: true,
-          paidAt: true,
+          completedAt: true,
         },
       });
 
@@ -104,10 +101,21 @@ router.get("/top-contributors", async (req, res) => {
         const stats = userMap.get(bounty.assignee);
         if (!stats) return;
         stats.submitted += 1;
-        if (bounty.status === "DONE" && bounty.paidAt) {
-          stats.completed += 1;
-          stats.totalEarned += bounty.bountyAmount || 0;
+
+        const isCompleted = bounty.status === "DONE" && bounty.completedAt;
+        if (!isCompleted) return;
+
+        // Apply the time-range filter only to completion-based stats
+        if (completedAtFilter.completedAt) {
+          if (
+            new Date(bounty.completedAt) < completedAtFilter.completedAt.gte
+          ) {
+            return;
+          }
         }
+
+        stats.completed += 1;
+        stats.totalEarned += bounty.bountyAmount || 0;
       });
 
       const sorted = Array.from(userMap.values()).sort(
@@ -121,13 +129,12 @@ router.get("/top-contributors", async (req, res) => {
       where: {
         assignee: { not: null },
         ...chainFilter,
-        ...paidAtFilter,
       },
       select: {
         assignee: true,
         status: true,
         bountyAmount: true,
-        paidAt: true,
+        completedAt: true,
         assigneeUser: {
           select: {
             id: true,
@@ -157,7 +164,6 @@ router.get("/top-contributors", async (req, res) => {
         else if (hasUA) addressType = "UA only";
         else if (hasZ) addressType = "Sapling";
 
-        // === BADGE LOGIC ===
         const userBadges = Array.isArray(bounty.assigneeUser.badges)
           ? [...bounty.assigneeUser.badges]
           : [];
@@ -181,10 +187,17 @@ router.get("/top-contributors", async (req, res) => {
       const stats = userStats.get(userId);
       stats.submitted += 1;
 
-      if (bounty.status === "DONE" && bounty.paidAt) {
-        stats.completed += 1;
-        stats.totalEarned += bounty.bountyAmount || 0;
+      const isCompleted = bounty.status === "DONE" && bounty.completedAt;
+      if (!isCompleted) return;
+
+      if (completedAtFilter.completedAt) {
+        if (new Date(bounty.completedAt) < completedAtFilter.completedAt.gte) {
+          return;
+        }
       }
+
+      stats.completed += 1;
+      stats.totalEarned += bounty.bountyAmount || 0;
     });
 
     const sorted = Array.from(userStats.values())
@@ -203,25 +216,25 @@ router.get("/contributors-over-time", async (req, res) => {
   try {
     const chainFilter = getChainFilter(req.query.chain);
 
-    const paidBounties = await prisma.bounty.findMany({
+    const completedBounties = await prisma.bounty.findMany({
       where: {
         status: "DONE",
         ...chainFilter,
-        paidAt: { not: null },
+        completedAt: { not: null },
       },
       select: {
-        paidAt: true,
+        completedAt: true,
         assignee: true,
       },
       orderBy: {
-        paidAt: "asc",
+        completedAt: "asc",
       },
     });
 
     const monthlyData = new Map();
-    paidBounties.forEach((bounty) => {
-      if (!bounty.paidAt) return;
-      const date = new Date(bounty.paidAt);
+    completedBounties.forEach((bounty) => {
+      if (!bounty.completedAt) return;
+      const date = new Date(bounty.completedAt);
       const monthKey = date.toISOString().slice(0, 7);
       if (!monthlyData.has(monthKey)) {
         monthlyData.set(monthKey, new Set());
@@ -242,8 +255,6 @@ router.get("/contributors-over-time", async (req, res) => {
       });
     });
 
-    console.log(result);
-
     res.json(result);
   } catch (error) {
     console.error("Error in /contributors-over-time:", error);
@@ -255,35 +266,35 @@ router.get("/contributors-over-time", async (req, res) => {
 router.get("/average-earnings-over-time", async (req, res) => {
   try {
     const timeRange = req.query.timeRange || "all";
-    const paidAtFilter = getPaidAtFilter(timeRange);
+    const completedAtFilter = getCompletedAtFilter(timeRange);
     const chainFilter = getChainFilter(req.query.chain);
 
-    const paidBounties = await prisma.bounty.findMany({
+    const completedBounties = await prisma.bounty.findMany({
       where: {
         status: "DONE",
         ...chainFilter,
-        paidAt: { not: null },
-        ...paidAtFilter,
+        completedAt: { not: null },
+        ...completedAtFilter,
       },
       select: {
-        paidAt: true,
+        completedAt: true,
         bountyAmount: true,
         assignee: true,
       },
       orderBy: {
-        paidAt: "asc",
+        completedAt: "asc",
       },
     });
 
-    if (paidBounties.length === 0) {
+    if (completedBounties.length === 0) {
       return res.json([]);
     }
 
     const monthlyData = new Map();
 
-    paidBounties.forEach((bounty) => {
-      if (!bounty.paidAt) return;
-      const date = new Date(bounty.paidAt);
+    completedBounties.forEach((bounty) => {
+      if (!bounty.completedAt) return;
+      const date = new Date(bounty.completedAt);
       const monthKey = date.toISOString().slice(0, 7);
 
       if (!monthlyData.has(monthKey)) {
@@ -331,8 +342,6 @@ router.get("/average-earnings-over-time", async (req, res) => {
 });
 
 // PATCH /api/kpis/users/:id/badges
-// Only admins can update badges
-
 router.patch("/users/:id/badges", authenticate, isAdmin, async (req, res) => {
   try {
     const { badges } = req.body;
@@ -355,6 +364,8 @@ router.patch("/users/:id/badges", authenticate, isAdmin, async (req, res) => {
 });
 
 // GET /api/kpis/bounty-types-over-time
+// Left as dateCreated — this tracks when bounty *categories* were created/opened,
+// not completion, so it's intentionally unaffected by this change.
 router.get("/bounty-types-over-time", async (req, res) => {
   try {
     const chainFilter = getChainFilter(req.query.chain);
