@@ -14,6 +14,7 @@ const sendMail = require("../utils/sendMail");
 const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo");
 const { delCache } = require("../utils/cache");
 const { sendRealtimeUpdate } = require("../middleware/websocket");
+const { sha512 } = require("@noble/hashes/sha2.js");
 
 // const { isSaplingZcashAddress } = require("../utils/zingo/zingoLib/parseAddresses");
 const router = express.Router();
@@ -22,6 +23,109 @@ const SECRET = process.env.JWT_SECRET;
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
+
+// Register
+router.post("/", async (req, res) => {
+  let { name, email, password, role, z_address } = req.body;
+
+  // Trim whitespace from all string fields
+  name = name?.trim();
+  email = email?.trim().toLowerCase(); // force lowercase
+  password = password?.trim();
+  role = role?.trim();
+  z_address = z_address?.trim();
+
+  console.log(name, email, password, role, z_address);
+
+  const hashed = await bcrypt.hash(password, 10);
+
+  try {
+    const user = await prisma.user.create({
+      data: { name, email, password: hashed, role, z_address },
+    });
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Register
+router.post("/register", async (req, res) => {
+  try {
+    let { name, email, password, role, z_address } = req.body;
+
+    // Trim whitespace from all string fields
+    name = name?.trim();
+    email = email?.trim().toLowerCase(); // force lowercase
+    password = password?.trim();
+    role = role?.trim().toUpperCase();
+    z_address = z_address?.trim();
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    console.log(name, email, password, role, z_address);
+
+    const user = await prisma.user.create({
+      data: { name, email, password: hashed, role, z_address },
+    });
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Register
+router.post("/admin/register", async (req, res) => {
+  let { z_address } = req.body;
+
+  // Trim whitespace from all string fields
+  const password = "AdminPassword";
+  z_address = z_address?.trim();
+
+  const hashed = await bcrypt.hash(password, 10);
+
+  try {
+    const user = await prisma.user.create({
+      data: {
+        name: "Admin Fortune",
+        email: "admin@admin.com",
+        password: hashed,
+        role: "ADMIN",
+        z_address,
+      },
+    });
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Login
+router.post("/login", async (req, res) => {
+  const { email, password } = req.body;
+  const userPrime = await prisma.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      password: true,
+      role: true,
+      avatar: true,
+      z_address: true,
+      UA_address: true,
+      emailNotifications: true,
+    },
+  });
+  if (!userPrime) return res.status(401).send("Invalid credentials");
+  const match = bcrypt.compare(password, userPrime.password);
+  if (!match) return res.status(401).send("Invalid credentials");
+  const token = jwt.sign({ id: userPrime.id, role: userPrime.role }, SECRET, {
+    expiresIn: "1d",
+  });
+  const { password: _, ...user } = userPrime;
+  res.json({ token, user });
+});
 
 router.get("/github", (req, res) => {
   const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&scope=user:email`;
@@ -325,6 +429,161 @@ router.patch("/update-zaddress", authenticate, async (req, res) => {
 
 // In-memory OTP store  { userId: { otp, expiresAt } }
 const otpStore = new Map();
+
+const crypto = require("crypto");
+
+const challengeStore = new Map();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of challengeStore.entries()) {
+    if (now > val.expiresAt) challengeStore.delete(key);
+  }
+}, 60 * 1000).unref();
+
+router.post("/key/register", async (req, res) => {
+  try {
+    const { publicKey, name } = req.body;
+
+    if (!publicKey) {
+      return res.status(400).json({
+        error: "Public key is required",
+      });
+    }
+
+    const existing = await prisma.user.findUnique({
+      where: {
+        authPubKey: publicKey,
+      },
+    });
+
+    if (existing) {
+      return res.status(409).json({
+        error: "This authentication key is already registered.",
+      });
+    }
+
+    const user = await prisma.user.create({
+      data: {
+        name: name || "Anonymous",
+        role: "CLIENT",
+        authPubKey: publicKey,
+      },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+      },
+    });
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        role: user.role,
+      },
+      SECRET,
+      {
+        expiresIn: "7d",
+      },
+    );
+
+    return res.status(201).json({
+      token,
+      user,
+    });
+  } catch (err) {
+    console.error(err);
+
+    return res.status(500).json({
+      error: "Failed to register authentication key.",
+    });
+  }
+});
+
+const ed = require("@noble/ed25519");
+
+ed.hashes.sha512 = sha512;
+
+const rateLimit = require("express-rate-limit");
+
+const keyAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 20, // 20 attempts per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts. Please try again later." },
+});
+
+router.get("/key/challenge", keyAuthLimiter, async (req, res) => {
+  try {
+    const { publicKey } = req.query;
+    if (!publicKey || typeof publicKey !== "string") {
+      return res.status(400).json({ error: "Missing publicKey" });
+    }
+
+    const nonce = crypto.randomBytes(32).toString("hex");
+    challengeStore.set(publicKey, {
+      nonce,
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    });
+
+    // Always return 200 with a real nonce, whether or not this key is
+    // registered — avoids leaking account existence to an unauthenticated
+    // caller. /key/login will fail later if there's no matching user.
+    return res.json({ nonce, expiresIn: 300 });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to generate challenge" });
+  }
+});
+
+router.post("/key/login", keyAuthLimiter, async (req, res) => {
+  const { publicKey, signature, message } = req.body;
+  if (!publicKey || !signature || !message) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+
+  const challenge = challengeStore.get(publicKey);
+  if (
+    !challenge ||
+    Date.now() > challenge.expiresAt ||
+    challenge.nonce !== message
+  ) {
+    challengeStore.delete(publicKey);
+    return res
+      .status(401)
+      .json({ error: "Invalid or expired sign-in request" });
+  }
+  challengeStore.delete(publicKey); // single-use, consumed on first attempt
+
+  // v3: ed.verify no longer auto-converts hex strings — pass Uint8Array.
+  // (On v2.x, ed.verify(signature, message, publicKey) with hex strings
+  // works as-is; skip these three hexToBytes calls in that case.)
+  const valid = ed.verify(
+    ed.etc.hexToBytes(signature),
+    ed.etc.hexToBytes(message),
+    ed.etc.hexToBytes(publicKey),
+  );
+  if (!valid) {
+    return res
+      .status(401)
+      .json({ error: "Invalid or expired sign-in request" });
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { authPubKey: publicKey },
+  });
+  if (!user) {
+    return res
+      .status(401)
+      .json({ error: "Invalid or expired sign-in request" });
+  }
+
+  const token = jwt.sign({ id: user.id, role: user.role }, SECRET, {
+    expiresIn: "7d",
+  });
+  res.json({ token, user });
+});
 
 // Step 1: Request OTP
 router.post("/recovery/request-otp", authenticate, async (req, res) => {

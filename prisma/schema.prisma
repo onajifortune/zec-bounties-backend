@@ -18,7 +18,8 @@ model BountyCategory {
 model User {
   id                   String              @id @default(cuid())
   name                 String
-  email                String              @unique
+  email                String?              @unique
+  authPubKey String? @unique
   emailNotifications   Boolean             @default(true)
   password             String?
   nickname             String?
