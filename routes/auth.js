@@ -15,6 +15,7 @@ const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo
 const { delCache } = require("../utils/cache");
 const { sendRealtimeUpdate } = require("../middleware/websocket");
 const { sha512 } = require("@noble/hashes/sha2.js");
+const { getLoginAddress } = require("../services/zcashLoginWatcher");
 
 // const { isSaplingZcashAddress } = require("../utils/zingo/zingoLib/parseAddresses");
 const router = express.Router();
@@ -754,6 +755,40 @@ router.patch("/update-nickname", authenticate, async (req, res) => {
     console.error("Failed to update nickname:", error);
     res.status(500).json({ error: "Failed to update nickname" });
   }
+});
+
+router.post("/zcash/challenge", async (req, res) => {
+  const address = getLoginAddress();
+  if (!address) {
+    return res.status(503).json({ error: "Zcash login service not ready" });
+  }
+
+  const challengeId = crypto.randomUUID();
+  const memo = `ZECBOUNTIES-LOGIN:${challengeId}`;
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+  await prisma.zcashLoginChallenge.create({
+    data: { id: challengeId, memo, address, expiresAt },
+  });
+
+  const uri = `zcash:${address}?amount=0&memo=${Buffer.from(memo).toString("base64url")}&message=${encodeURIComponent("Sign in to ZecBounties")}`;
+  res.json({ challengeId, uri, expiresAt });
+});
+
+router.get("/zcash/challenge/:id/status", async (req, res) => {
+  const challenge = await prisma.zcashLoginChallenge.findUnique({
+    where: { id: req.params.id },
+    include: { user: true },
+  });
+  if (!challenge) return res.status(404).json({ status: "NOT_FOUND" });
+  if (challenge.status === "CONFIRMED") {
+    return res.json({
+      status: "CONFIRMED",
+      token: challenge.sessionToken,
+      user: challenge.user,
+    });
+  }
+  res.json({ status: challenge.status });
 });
 
 // Helpers

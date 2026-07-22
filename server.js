@@ -9,6 +9,7 @@ const cors = require("cors");
 const { handleWebSocket } = require("./middleware/websocket");
 const { WebSocketServer } = require("ws");
 const prisma = require("./prisma/client");
+const { initLoginWatcher } = require("./services/zcashLoginWatcher");
 const { connectRedis } = require("./config/redis");
 
 const app = express();
@@ -53,6 +54,9 @@ server.listen(PORT, async () => {
   await connectRedis();
   console.log(`Server running on port ${PORT}`);
   console.log(`WebSocket endpoint: ws://localhost:${PORT}`);
+  // initLoginWatcher().catch((err) => {
+  //   console.error("Failed to start Zcash login watcher:", err);
+  // });
 });
 
 // Graceful shutdown
