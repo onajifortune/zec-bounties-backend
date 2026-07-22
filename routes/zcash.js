@@ -106,7 +106,6 @@ router.post("/import-wallet", authenticate, async (req, res) => {
     }
 
     const newParams = await getLatestZcashParams(userId);
-    console.log(newParams);
     await executeZingoCliSeed(newParams, seedPhrase, birthdayHeight);
 
     await prisma.$transaction(
@@ -530,7 +529,6 @@ router.delete("/params/:accountName", authenticate, async (req, res) => {
     invalidateZingo({ chain, serverUrl, dataDir });
 
     await fs.rm(dataDir, { recursive: true, force: true });
-    console.log(`Deleted wallet folder at ${dataDir}`);
 
     await prisma.zcashParams.delete({ where: { id: existing.id } });
 

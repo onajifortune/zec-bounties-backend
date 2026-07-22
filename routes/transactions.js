@@ -90,8 +90,6 @@ router.get("/balance", authenticate, isAdmin, async (req, res) => {
   }
   const data = await executeZingoCliBalance("balance", params);
 
-  console.log("balance", data);
-
   // ✅ Send balance only to the requesting admin (not broadcast)
   sendToUser(req.user.id, "balance_fetched", { balance: data });
 
@@ -121,7 +119,7 @@ router.post("/accounts", authenticate, async (req, res) => {
 router.get("/addresses", authenticate, isAdmin, async (req, res) => {
   const params = await getDefaultZcashParams(req.user.id);
   const status = await executeZingoCliSync("sync status", params);
-  console.log("status", status);
+  console.log("status-add", status);
 
   const addresses = await executeZingoCliAddresses("addresses", params);
 

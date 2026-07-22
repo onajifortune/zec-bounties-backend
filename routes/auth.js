@@ -293,8 +293,6 @@ router.get("/has-zcash-params", authenticate, async (req, res) => {
 router.patch("/update-zaddress", authenticate, async (req, res) => {
   const { z_address } = req.body;
 
-  console.log(z_address);
-
   // const validAddress = verifyZaddress(z_address);
 
   const validAddress = true;

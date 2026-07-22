@@ -16,15 +16,11 @@ async function executeZingoCliSeed(params, seed, birthday) {
     `--birthday ${birthday || 0}`,
   ].join(" ");
 
-  console.log(args);
-
   try {
     // 1️⃣ Run CLI and capture full output
     const rawOutput = execSync(`${zingoPath} ${args}`, {
       stdio: "pipe",
     }).toString();
-
-    console.log(rawOutput);
 
     // 2️⃣ Strip ANSI color codes
     const noAnsi = rawOutput.replace(/\u001b\[[0-9;]*m/g, "");

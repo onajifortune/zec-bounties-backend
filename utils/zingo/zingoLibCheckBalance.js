@@ -48,8 +48,6 @@ async function executeZingoCheckBalance(command, params) {
       stdio: "pipe",
     }).toString();
 
-    console.log(rawOutput);
-
     const parsed = parseZingoBalance(rawOutput);
 
     return parsed;

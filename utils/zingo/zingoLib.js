@@ -15,8 +15,6 @@ async function executeZingoCli(command, params) {
     command,
   ].join(" ");
 
-  console.log(args);
-
   try {
     // 1️⃣ Run CLI and capture full output
     const rawOutput = execSync(`${zingoPath} ${args}`, {
