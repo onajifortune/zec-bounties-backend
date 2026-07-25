@@ -537,6 +537,60 @@ class ZingoProcess {
     });
   }
 
+  notes(timeout = 10000) {
+    const command = "notes";
+    return new Promise((resolve, reject) => {
+      let buffer = "";
+
+      const onData = (chunk) => {
+        buffer += chunk.toString();
+
+        const clean = buffer.replace(/\u001b\[[0-9;]*m/g, "");
+        console.log("notes chunk:", clean); // TEMP — remove once field names below are confirmed
+
+        const blocks = clean.match(/\{\n[\s\S]*?\n\}/g) || [];
+
+        if (blocks.length > 0) {
+          cleanup();
+
+          const parsed = blocks
+            .map((block) => {
+              try {
+                return parseTransactionBlock(block); // reuse existing brace/key:value parser
+              } catch (e) {
+                console.error("Parse error:", e);
+                return null;
+              }
+            })
+            .filter(Boolean);
+
+          resolve(parsed);
+        }
+      };
+
+      const onError = (err) => {
+        cleanup();
+        reject(err);
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.proc.stdout.off("data", onData);
+        this.proc.stderr.off("data", onError);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Zingo notes timeout"));
+      }, timeout);
+
+      this.proc.stdout.on("data", onData);
+      this.proc.stderr.on("data", onError);
+
+      this.proc.stdin.write(command + "\n");
+    });
+  }
+
   recovery_info(command = "recovery_info", timeout = 10000) {
     return new Promise((resolve, reject) => {
       let buffer = "";

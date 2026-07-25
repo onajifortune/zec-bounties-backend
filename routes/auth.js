@@ -771,24 +771,17 @@ router.post("/zcash/challenge", async (req, res) => {
     data: { id: challengeId, memo, address, expiresAt },
   });
 
-  const uri = `zcash:${address}?amount=0&memo=${Buffer.from(memo).toString("base64url")}&message=${encodeURIComponent("Sign in to ZecBounties")}`;
-  res.json({ challengeId, uri, expiresAt });
-});
-
-router.get("/zcash/challenge/:id/status", async (req, res) => {
-  const challenge = await prisma.zcashLoginChallenge.findUnique({
-    where: { id: req.params.id },
-    include: { user: true },
+  const params = new URLSearchParams({
+    address,
+    amount: "0.00000001",
+    label: "ZecBounties",
+    message: "Sign in to ZecBounties",
+    memo: Buffer.from(memo).toString("base64url"),
   });
-  if (!challenge) return res.status(404).json({ status: "NOT_FOUND" });
-  if (challenge.status === "CONFIRMED") {
-    return res.json({
-      status: "CONFIRMED",
-      token: challenge.sessionToken,
-      user: challenge.user,
-    });
-  }
-  res.json({ status: challenge.status });
+
+  const uri = `zcash:?${params.toString()}`;
+
+  res.json({ challengeId, uri, expiresAt });
 });
 
 // Helpers

@@ -39,10 +39,10 @@ function extractShieldedAddress(addresses) {
 async function pollForLogins() {
   try {
     await loginWallet.sync("sync status");
-    const txs = await loginWallet.transactions();
+    const notes = await loginWallet.notes();
 
-    for (const tx of txs) {
-      const memo = findMemo(tx);
+    for (const note of notes) {
+      const memo = findMemo(note);
       if (!memo || !memo.startsWith(MEMO_PREFIX)) continue;
 
       const challengeId = memo.slice(MEMO_PREFIX.length).trim();
@@ -59,7 +59,7 @@ async function pollForLogins() {
         continue;
       }
 
-      await confirmChallenge(challenge, tx);
+      await confirmChallenge(challenge, note);
     }
   } catch (err) {
     console.error("Zcash login watcher poll error:", err);
