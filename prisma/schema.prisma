@@ -58,6 +58,7 @@ model Bounty {
   paymentBatchId    String?
   paidAt            DateTime?
   categoryId        String?
+  teamId            String? 
   createdBy         String
   assignee          String?
   chain             Chain               @default(MAIN)
@@ -77,6 +78,7 @@ model Bounty {
   @@index([dateCreated])
   @@index([isPaid, paidAt])
   @@index([completedAt])
+  @@index([teamId])
 }
 
 model BountyAssignee {
@@ -171,6 +173,7 @@ model Team {
   updatedAt   DateTime     @updatedAt
   members     TeamMember[]
   wallet      TeamWallet?
+  bounties    Bounty[]     @relation("TeamBounties")
 
   @@map("teams")
 }

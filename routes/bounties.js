@@ -1597,27 +1597,27 @@ router.put("/:id", authenticate, isAdmin, async (req, res) => {
           .map((a) => a.user)
           .filter((u) => u?.email);
 
-        if (recipients.length > 0) {
-          Promise.all(
-            recipients.map((u) =>
-              sendMail({
-                to: u.email,
-                subject: `Bounty update: ${updated.title}`,
-                text: `Hi ${u.nickname || u.name},\n\n"${updated.title}" was updated:\n\n${changes.map((c) => `- ${c}`).join("\n")}`,
-                html: `
-                  <h2>Bounty update</h2>
-                  <p>Hi ${u.nickname || u.name},</p>
-                  <p><strong>${updated.title}</strong> was updated:</p>
-                  <ul>
-                    ${changes.map((c) => `<li>${c}</li>`).join("")}
-                  </ul>
-                `,
-              }),
-            ),
-          ).catch((mailErr) =>
-            console.error("Bounty update notification email failed:", mailErr),
-          );
-        }
+        // if (recipients.length > 0) {
+        //   Promise.all(
+        //     recipients.map((u) =>
+        //       sendMail({
+        //         to: u.email,
+        //         subject: `Bounty update: ${updated.title}`,
+        //         text: `Hi ${u.nickname || u.name},\n\n"${updated.title}" was updated:\n\n${changes.map((c) => `- ${c}`).join("\n")}`,
+        //         html: `
+        //           <h2>Bounty update</h2>
+        //           <p>Hi ${u.nickname || u.name},</p>
+        //           <p><strong>${updated.title}</strong> was updated:</p>
+        //           <ul>
+        //             ${changes.map((c) => `<li>${c}</li>`).join("")}
+        //           </ul>
+        //         `,
+        //       }),
+        //     ),
+        //   ).catch((mailErr) =>
+        //     console.error("Bounty update notification email failed:", mailErr),
+        //   );
+        // }
       }
     }
   } catch (error) {
