@@ -12,6 +12,7 @@ const {
   TTL,
 } = require("../utils/cache");
 const sendMail = require("../utils/sendMail");
+const { invalidateLeaderboard } = require("./leaderboard");
 
 // ─── Reusable select shapes (avoids re-typing & keeps payloads small) ─────────
 const USER_SELECT = { id: true, name: true, nickname: true, avatar: true };
@@ -77,6 +78,7 @@ const invalidateBounty = async (bountyId) => {
     delCache(`assignees:${bountyId}`),
     delCache("stats:totals"),
     deleteCacheByPattern("bounties:*"),
+    invalidateLeaderboard(),
   ]);
 };
 
@@ -96,6 +98,50 @@ const invalidateSubmissions = async (bountyId, submittedBy) => {
   ]);
 };
 
+// ─── Teams/Hunter: can this user manage a given bounty? ───────────────────────
+// TEAM-created bounties (bounty.teamId set) can be managed by ANY member of
+// that team, not just whoever clicked "create" — matters because Teams are
+// multi-person orgs. Falls back to the original createdBy/ADMIN check for
+// individually-created (CLIENT/legacy) bounties.
+const canManageBounty = async (bounty, user) => {
+  if (user.role === "ADMIN") return true;
+  if (bounty.createdBy === user.id) return true;
+  if (bounty.teamId) {
+    const membership = await prisma.teamMember.findUnique({
+      where: { teamId_userId: { teamId: bounty.teamId, userId: user.id } },
+      select: { id: true },
+    });
+    return !!membership;
+  }
+  return false;
+};
+
+// Team-aware replacement for isAdmin on bounty-management routes — lets
+// platform ADMINs *or* any member of the owning team manage a bounty.
+// Deliberately NOT used on /authorize-payment — that stays ADMIN-only since
+// it's the actual funds-release trigger, and letting a team authorize its
+// own payment is a conflict of interest, not just a permissions nicety.
+const requireBountyManager = async (req, res, next) => {
+  try {
+    const bounty = await prisma.bounty.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, createdBy: true, teamId: true },
+    });
+    if (!bounty) return res.status(404).json({ error: "Bounty not found" });
+
+    if (!(await canManageBounty(bounty, req.user))) {
+      return res
+        .status(403)
+        .json({ error: "You do not have permission to manage this bounty" });
+    }
+    req.bounty = bounty;
+    next();
+  } catch (error) {
+    console.error("Error checking bounty manager permission:", error);
+    res.status(500).json({ error: "Failed to verify permissions" });
+  }
+};
+
 // ─── Create bounty ────────────────────────────────────────────────────────────
 router.post("/", authenticate, async (req, res) => {
   try {
@@ -107,35 +153,128 @@ router.post("/", authenticate, async (req, res) => {
       assignee,
       isApproved,
       categoryId,
-      chain, // NEW
+      chain,
+      listingType, // NEW — "PROJECT" | "BOUNTY", defaults to PROJECT via schema
+      rewardTiers, // NEW — [{ rank: 1, amount: 500 }, { rank: 2, amount: 300 }, ...] — BOUNTY only
     } = req.body;
 
     if (chain && !["MAIN", "TEST"].includes(chain)) {
       return res.status(400).json({ error: "Invalid chain value" });
     }
 
+    if (listingType && !["PROJECT", "BOUNTY"].includes(listingType)) {
+      return res.status(400).json({ error: "Invalid listingType value" });
+    }
+
+    // ── Teams/Hunter: only TEAM/CLIENT/ADMIN can create — Hunters apply/submit only ──
+    if (req.user.role === "HUNTER") {
+      return res.status(403).json({
+        error:
+          "Hunters cannot create bounties — apply to or submit work instead",
+      });
+    }
+
+    // TEAM-role users create on behalf of their team, not as an individual.
+    // (Assumes one team per TEAM-role user for now — first membership wins.)
+    let resolvedTeamId = null;
+    if (req.user.role === "TEAM") {
+      const membership = await prisma.teamMember.findFirst({
+        where: { userId: req.user.id },
+        select: { teamId: true },
+      });
+      if (!membership) {
+        return res.status(400).json({
+          error: "Your account is marked as a Team but isn't linked to a team",
+        });
+      }
+      resolvedTeamId = membership.teamId;
+    }
+
+    const resolvedListingType = listingType || "PROJECT";
+    const parsedBountyAmount = parseFloat(bountyAmount);
+
+    // ── Reward tier validation (BOUNTY only) ────────────────────────────────
+    let validatedTiers = null;
+    let maxWinners = 1;
+
+    if (resolvedListingType === "BOUNTY") {
+      if (!Array.isArray(rewardTiers) || rewardTiers.length === 0) {
+        return res.status(400).json({
+          error: "BOUNTY listings require at least one reward tier",
+        });
+      }
+
+      // ranks must be 1..N, sequential, no gaps or duplicates
+      const ranks = rewardTiers.map((t) => t.rank).sort((a, b) => a - b);
+      const expectedRanks = Array.from(
+        { length: rewardTiers.length },
+        (_, i) => i + 1,
+      );
+      const ranksValid = ranks.every((r, i) => r === expectedRanks[i]);
+      if (!ranksValid) {
+        return res.status(400).json({
+          error:
+            "Reward tier ranks must be sequential starting at 1 (1, 2, 3...)",
+        });
+      }
+
+      const tierAmounts = rewardTiers.map((t) => parseFloat(t.amount));
+      if (tierAmounts.some((a) => !Number.isFinite(a) || a <= 0)) {
+        return res.status(400).json({
+          error: "Every reward tier must have a positive numeric amount",
+        });
+      }
+
+      const tierSum = tierAmounts.reduce((sum, a) => sum + a, 0);
+      // small epsilon for float rounding
+      if (Math.abs(tierSum - parsedBountyAmount) > 0.0001) {
+        return res.status(400).json({
+          error: `Reward tier amounts (${tierSum}) must sum to bountyAmount (${parsedBountyAmount})`,
+        });
+      }
+
+      validatedTiers = rewardTiers.map((t, i) => ({
+        rank: expectedRanks[i],
+        amount: parseFloat(t.amount),
+      }));
+      maxWinners = validatedTiers.length;
+    }
+
     const resolvedAssignee = assignee === "none" ? null : assignee;
     const isClient = req.user.role === "CLIENT";
+
+    // BOUNTY listings skip pre-assignment entirely — open submissions only
+    const shouldPreAssign =
+      resolvedListingType === "PROJECT" && isClient && resolvedAssignee;
 
     const bounty = await prisma.bounty.create({
       data: {
         title,
         description,
-        bountyAmount: parseFloat(bountyAmount),
+        bountyAmount: parsedBountyAmount,
         timeToComplete: new Date(timeToComplete),
         createdBy: req.user.id,
-        assignee: resolvedAssignee,
+        assignee: resolvedListingType === "PROJECT" ? resolvedAssignee : null,
         isApproved,
         categoryId,
-        ...(chain && { chain }), // NEW — falls back to schema default (TEST) if omitted
-        ...(isClient &&
-          resolvedAssignee && {
-            assignees: {
-              create: {
-                userId: resolvedAssignee,
-              },
+        listingType: resolvedListingType,
+        maxWinners,
+        teamId: resolvedTeamId,
+        ...(chain && { chain }),
+        ...(shouldPreAssign && {
+          assignees: {
+            create: {
+              userId: resolvedAssignee,
             },
-          }),
+          },
+        }),
+        ...(validatedTiers && {
+          rewardTiers: {
+            createMany: {
+              data: validatedTiers,
+            },
+          },
+        }),
       },
       include: {
         createdByUser: {
@@ -147,6 +286,12 @@ router.post("/", authenticate, async (req, res) => {
         assigneeUser: {
           select: USER_SELECT_FULL,
         },
+        rewardTiers: {
+          orderBy: { rank: "asc" },
+        },
+        team: {
+          select: { id: true, name: true },
+        },
       },
     });
 
@@ -157,46 +302,46 @@ router.post("/", authenticate, async (req, res) => {
     res.status(201).json(bounty);
 
     // Fire-and-forget notification to all users
-    (async () => {
-      try {
-        const cachedUsers = await getCache("users:all");
-        const users =
-          cachedUsers ??
-          (await prisma.user.findMany({
-            select: { email: true, emailNotifications: true },
-          }));
+    // (async () => {
+    //   try {
+    //     const cachedUsers = await getCache("users:all");
+    //     const users =
+    //       cachedUsers ??
+    //       (await prisma.user.findMany({
+    //         select: { email: true, emailNotifications: true },
+    //       }));
 
-        const recipients = users
-          .filter((u) => u.emailNotifications !== false)
-          .map((u) => u.email)
-          .filter(Boolean);
+    //     const recipients = users
+    //       .filter((u) => u.emailNotifications !== false)
+    //       .map((u) => u.email)
+    //       .filter(Boolean);
 
-        const creatorDisplayName =
-          bounty.createdByUser.nickname || bounty.createdByUser.name;
+    //     const creatorDisplayName =
+    //       bounty.createdByUser.nickname || bounty.createdByUser.name;
 
-        await Promise.all(
-          recipients.map((recipient) =>
-            sendMail({
-              to: recipient,
-              subject: `New Bounty Created: ${bounty.title}`,
-              text: `A new bounty has been created.\n\nCreated by: ${creatorDisplayName}\n\nTitle: ${bounty.title}\nAmount: ${bounty.bountyAmount}`,
-              html: `
-            <h2>New Bounty Created</h2>
-            <p><strong>Created by:</strong> ${creatorDisplayName}</p>
-            <p><strong>Title:</strong> ${bounty.title}</p>
-            <p><strong>Description:</strong><br/>
-              ${formatEmailText(bounty.description)}
-            </p>
-            <p><strong>Amount:</strong> ${bounty.bountyAmount} ZEC</p>
-            <p><strong>Time to complete:</strong> ${bounty.timeToComplete}</p>
-          `,
-            }),
-          ),
-        );
-      } catch (mailErr) {
-        console.error("Bounty notification email failed:", mailErr);
-      }
-    })();
+    //     await Promise.all(
+    //       recipients.map((recipient) =>
+    //         sendMail({
+    //           to: recipient,
+    //           subject: `New Bounty Created: ${bounty.title}`,
+    //           text: `A new bounty has been created.\n\nCreated by: ${creatorDisplayName}\n\nTitle: ${bounty.title}\nAmount: ${bounty.bountyAmount}`,
+    //           html: `
+    //         <h2>New Bounty Created</h2>
+    //         <p><strong>Created by:</strong> ${creatorDisplayName}</p>
+    //         <p><strong>Title:</strong> ${bounty.title}</p>
+    //         <p><strong>Description:</strong><br/>
+    //           ${formatEmailText(bounty.description)}
+    //         </p>
+    //         <p><strong>Amount:</strong> ${bounty.bountyAmount} ZEC</p>
+    //         <p><strong>Time to complete:</strong> ${bounty.timeToComplete}</p>
+    //       `,
+    //         }),
+    //       ),
+    //     );
+    //   } catch (mailErr) {
+    //     console.error("Bounty notification email failed:", mailErr);
+    //   }
+    // })();
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to create bounty" });
@@ -236,6 +381,12 @@ router.get("/", async (req, res) => {
           createdByUser: {
             select: USER_SELECT_WITH_ROLE,
           },
+          rewardTiers: {
+            orderBy: { rank: "asc" },
+          },
+          _count: {
+            select: { workSubmissions: true },
+          },
         },
       }),
       prisma.bounty.count(),
@@ -256,143 +407,158 @@ router.get("/", async (req, res) => {
 // ─── Add / replace assignees (Admin only) ─────────────────────────────────────
 // FIX: Replaced N individual prisma.bountyAssignee.create calls with a single
 //      createMany, cutting round-trips from O(n) → O(1).
-router.post("/:id/assignees", authenticate, isAdmin, async (req, res) => {
-  try {
-    const { id: bountyId } = req.params;
-    const { userIds, notifyUsers = false } = req.body;
+// NEW: BOUNTY listings don't support pre-assignment — open submissions only.
+router.post(
+  "/:id/assignees",
+  authenticate,
+  requireBountyManager,
+  async (req, res) => {
+    try {
+      const { id: bountyId } = req.params;
+      const { userIds, notifyUsers = false } = req.body;
 
-    if (!Array.isArray(userIds)) {
-      return res.status(400).json({ error: "userIds must be an array" });
-    }
-
-    const bounty = await prisma.bounty.findUnique({
-      where: { id: bountyId },
-      select: { id: true, status: true, title: true },
-    });
-    if (!bounty) return res.status(404).json({ error: "Bounty not found" });
-
-    // Snapshot BEFORE the transaction wipes/recreates the roster
-    const existingAssignees = await prisma.bountyAssignee.findMany({
-      where: { bountyId },
-      include: { user: { select: USER_SELECT_FULL } },
-    });
-    const existingAssigneeIds = new Set(existingAssignees.map((a) => a.userId));
-    const newAssigneeIds = new Set(userIds);
-
-    const [, assignees] = await prisma.$transaction(async (tx) => {
-      await tx.bountyAssignee.deleteMany({ where: { bountyId } });
-
-      if (userIds.length === 0) {
-        await tx.bounty.update({
-          where: { id: bountyId },
-          data: { status: "CANCELLED", assignee: null },
-        });
-        return [null, []];
+      if (!Array.isArray(userIds)) {
+        return res.status(400).json({ error: "userIds must be an array" });
       }
 
-      await tx.bountyAssignee.createMany({
-        data: userIds.map((userId) => ({ bountyId, userId })),
+      const bounty = await prisma.bounty.findUnique({
+        where: { id: bountyId },
+        select: { id: true, status: true, title: true, listingType: true },
       });
+      if (!bounty) return res.status(404).json({ error: "Bounty not found" });
 
-      if (["TO_DO", "CANCELLED"].includes(bounty.status)) {
-        await tx.bounty.update({
-          where: { id: bountyId },
-          data: { status: "IN_PROGRESS" },
+      if (bounty.listingType === "BOUNTY") {
+        return res.status(400).json({
+          error:
+            "BOUNTY listings don't support pre-assignment — anyone can submit directly",
         });
       }
 
-      const created = await tx.bountyAssignee.findMany({
+      // Snapshot BEFORE the transaction wipes/recreates the roster
+      const existingAssignees = await prisma.bountyAssignee.findMany({
         where: { bountyId },
         include: { user: { select: USER_SELECT_FULL } },
       });
-      return [null, created];
-    });
+      const existingAssigneeIds = new Set(
+        existingAssignees.map((a) => a.userId),
+      );
+      const newAssigneeIds = new Set(userIds);
 
-    sendRealtimeUpdate(
-      "bounty_assignees_updated",
-      { bountyId, assignees },
-      req.user.id,
-    );
-    await invalidateBounty(bountyId);
-    res.status(200).json({ assignees });
+      const [, assignees] = await prisma.$transaction(async (tx) => {
+        await tx.bountyAssignee.deleteMany({ where: { bountyId } });
 
-    try {
-      console.log("[assignee notify] notifyUsers:", notifyUsers);
+        if (userIds.length === 0) {
+          await tx.bounty.update({
+            where: { id: bountyId },
+            data: { status: "CANCELLED", assignee: null },
+          });
+          return [null, []];
+        }
 
-      if (notifyUsers === true) {
-        // Added: in the new list, weren't in the old list
-        const added = assignees.filter(
-          (a) => !existingAssigneeIds.has(a.userId) && a.user?.email,
-        );
+        await tx.bountyAssignee.createMany({
+          data: userIds.map((userId) => ({ bountyId, userId })),
+        });
 
-        // Removed: were in the old list, aren't in the new list
-        const removed = existingAssignees.filter(
-          (a) => !newAssigneeIds.has(a.userId) && a.user?.email,
-        );
+        if (["TO_DO", "CANCELLED"].includes(bounty.status)) {
+          await tx.bounty.update({
+            where: { id: bountyId },
+            data: { status: "IN_PROGRESS" },
+          });
+        }
 
-        console.log(
-          "[assignee notify] added:",
-          added.map((a) => a.user.email),
-          "removed:",
-          removed.map((a) => a.user.email),
-        );
+        const created = await tx.bountyAssignee.findMany({
+          where: { bountyId },
+          include: { user: { select: USER_SELECT_FULL } },
+        });
+        return [null, created];
+      });
 
-        const emailJobs = [];
+      sendRealtimeUpdate(
+        "bounty_assignees_updated",
+        { bountyId, assignees },
+        req.user.id,
+      );
+      await invalidateBounty(bountyId);
+      res.status(200).json({ assignees });
 
-        for (const a of added) {
-          emailJobs.push(
-            sendMail({
-              to: a.user.email,
-              subject: `🎉 You've been assigned: ${bounty.title}`,
-              text: `Hi ${a.user.nickname || a.user.name},\n\nCongratulations! You've been assigned to "${bounty.title}". You can start working on it now.`,
-              html: `
+      try {
+        console.log("[assignee notify] notifyUsers:", notifyUsers);
+
+        if (notifyUsers === true) {
+          // Added: in the new list, weren't in the old list
+          const added = assignees.filter(
+            (a) => !existingAssigneeIds.has(a.userId) && a.user?.email,
+          );
+
+          // Removed: were in the old list, aren't in the new list
+          const removed = existingAssignees.filter(
+            (a) => !newAssigneeIds.has(a.userId) && a.user?.email,
+          );
+
+          console.log(
+            "[assignee notify] added:",
+            added.map((a) => a.user.email),
+            "removed:",
+            removed.map((a) => a.user.email),
+          );
+
+          const emailJobs = [];
+
+          for (const a of added) {
+            emailJobs.push(
+              sendMail({
+                to: a.user.email,
+                subject: `🎉 You've been assigned: ${bounty.title}`,
+                text: `Hi ${a.user.nickname || a.user.name},\n\nCongratulations! You've been assigned to "${bounty.title}". You can start working on it now.`,
+                html: `
                 <h2>🎉 Congratulations, you were assigned!</h2>
                 <p>Hi ${a.user.nickname || a.user.name},</p>
                 <p>You've been assigned to:</p>
                 <p><strong>${bounty.title}</strong></p>
                 <p>You can start working on it now.</p>
               `,
-            }),
-          );
-        }
+              }),
+            );
+          }
 
-        for (const a of removed) {
-          emailJobs.push(
-            sendMail({
-              to: a.user.email,
-              subject: `Removed from bounty: ${bounty.title}`,
-              text: `Hi ${a.user.nickname || a.user.name},\n\nYou've been removed from "${bounty.title}". Reach out to the bounty creator if you have questions.`,
-              html: `
+          for (const a of removed) {
+            emailJobs.push(
+              sendMail({
+                to: a.user.email,
+                subject: `Removed from bounty: ${bounty.title}`,
+                text: `Hi ${a.user.nickname || a.user.name},\n\nYou've been removed from "${bounty.title}". Reach out to the bounty creator if you have questions.`,
+                html: `
                 <h2>You've been removed from a bounty</h2>
                 <p>Hi ${a.user.nickname || a.user.name},</p>
                 <p>You've been removed from:</p>
                 <p><strong>${bounty.title}</strong></p>
                 <p>Reach out to the bounty creator if you have questions.</p>
               `,
-            }),
-          );
-        }
+              }),
+            );
+          }
 
-        if (emailJobs.length > 0) {
-          await Promise.all(emailJobs);
+          if (emailJobs.length > 0) {
+            await Promise.all(emailJobs);
+          }
         }
+      } catch (mailErr) {
+        console.error("Assignee notification email failed:", mailErr);
       }
-    } catch (mailErr) {
-      console.error("Assignee notification email failed:", mailErr);
+    } catch (error) {
+      console.error("Error updating assignees:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to update assignees" });
+      }
     }
-  } catch (error) {
-    console.error("Error updating assignees:", error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Failed to update assignees" });
-    }
-  }
-});
+  },
+);
 
 // ─── Remove one assignee (Admin only) ────────────────────────────────────────
 router.delete(
   "/:id/assignees/:userId",
   authenticate,
-  isAdmin,
+  requireBountyManager,
   async (req, res) => {
     try {
       const { id: bountyId, userId } = req.params;
@@ -466,96 +632,108 @@ router.put(
 
 // ─── Approve bounty (Admin) ───────────────────────────────────────────────────
 // FIX: id was cast to Number() but schema uses cuid strings — removed the cast.
-router.patch("/:id/approve", authenticate, isAdmin, async (req, res) => {
-  try {
-    const updated = await prisma.bounty.update({
-      where: { id: req.params.id },
-      data: { approved: true },
-    });
-    sendRealtimeUpdate("bounty_approved", updated, req.user.id);
-    await invalidateBounty(req.params.id);
-    res.json(updated);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to approve bounty" });
-  }
-});
+router.patch(
+  "/:id/approve",
+  authenticate,
+  requireBountyManager,
+  async (req, res) => {
+    try {
+      const updated = await prisma.bounty.update({
+        where: { id: req.params.id },
+        data: { approved: true },
+      });
+      sendRealtimeUpdate("bounty_approved", updated, req.user.id);
+      await invalidateBounty(req.params.id);
+      res.json(updated);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to approve bounty" });
+    }
+  },
+);
 
 // ─── Change status (Admin) ────────────────────────────────────────────────────
 // FIX: Collapsed the fetch + update into a single transaction so the DB isn't
 //      hit twice serially for every status change.
-router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
-  try {
-    const { status, winnerId } = req.body;
-    const bountyId = req.params.id;
+router.patch(
+  "/:id/status",
+  authenticate,
+  requireBountyManager,
+  async (req, res) => {
+    try {
+      const { status, winnerId } = req.body;
+      const bountyId = req.params.id;
 
-    const bounty = await prisma.bounty.findUnique({
-      where: { id: bountyId },
-      select: {
-        id: true,
-        status: true,
-        assignee: true,
-        assignees: { select: { userId: true } },
-      },
-    });
-
-    if (!bounty) return res.status(404).json({ error: "Bounty not found" });
-
-    const isApproved = !["CANCELLED", "TO_DO"].includes(status);
-    let paymentAssigneeId = bounty.assignee;
-
-    if (status === "DONE") {
-      const count = bounty.assignees.length;
-      if (count === 1) {
-        paymentAssigneeId = bounty.assignees[0].userId;
-      } else if (count > 1) {
-        if (!winnerId) {
-          return res.status(400).json({
-            error: "Winner selection required",
-            requiresWinner: true,
-            assignees: bounty.assignees,
-          });
-        }
-        if (!bounty.assignees.some((a) => a.userId === winnerId)) {
-          return res
-            .status(400)
-            .json({ error: "Selected winner is not an assignee" });
-        }
-        paymentAssigneeId = winnerId;
-      }
-    }
-
-    const updated = await prisma.bounty.update({
-      where: { id: bountyId },
-      data: {
-        status,
-        isApproved,
-        ...(status === "DONE" && {
-          assignee: paymentAssigneeId,
-          completedAt: new Date(),
-        }),
-        ...(status !== "DONE" &&
-          bounty.status === "DONE" && { completedAt: null }),
-      },
-      include: {
-        ...ASSIGNEE_INCLUDE,
-        assigneeUser: { select: USER_SELECT_FULL },
-        createdByUser: {
-          select: USER_SELECT_WITH_ROLE,
+      const bounty = await prisma.bounty.findUnique({
+        where: { id: bountyId },
+        select: {
+          id: true,
+          status: true,
+          assignee: true,
+          assignees: { select: { userId: true } },
         },
-      },
-    });
+      });
 
-    sendRealtimeUpdate("bounty_status_changed", updated, req.user.id);
-    await invalidateBounty(bountyId);
-    res.json(updated);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to update bounty status" });
-  }
-});
+      if (!bounty) return res.status(404).json({ error: "Bounty not found" });
+
+      const isApproved = !["CANCELLED", "TO_DO"].includes(status);
+      let paymentAssigneeId = bounty.assignee;
+
+      if (status === "DONE") {
+        const count = bounty.assignees.length;
+        if (count === 1) {
+          paymentAssigneeId = bounty.assignees[0].userId;
+        } else if (count > 1) {
+          if (!winnerId) {
+            return res.status(400).json({
+              error: "Winner selection required",
+              requiresWinner: true,
+              assignees: bounty.assignees,
+            });
+          }
+          if (!bounty.assignees.some((a) => a.userId === winnerId)) {
+            return res
+              .status(400)
+              .json({ error: "Selected winner is not an assignee" });
+          }
+          paymentAssigneeId = winnerId;
+        }
+      }
+
+      const updated = await prisma.bounty.update({
+        where: { id: bountyId },
+        data: {
+          status,
+          isApproved,
+          ...(status === "DONE" && {
+            assignee: paymentAssigneeId,
+            completedAt: new Date(),
+          }),
+          ...(status !== "DONE" &&
+            bounty.status === "DONE" && { completedAt: null }),
+        },
+        include: {
+          ...ASSIGNEE_INCLUDE,
+          assigneeUser: { select: USER_SELECT_FULL },
+          createdByUser: {
+            select: USER_SELECT_WITH_ROLE,
+          },
+        },
+      });
+
+      sendRealtimeUpdate("bounty_status_changed", updated, req.user.id);
+      await invalidateBounty(bountyId);
+      res.json(updated);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to update bounty status" });
+    }
+  },
+);
 
 // ─── Submit work ──────────────────────────────────────────────────────────────
+// NEW: BOUNTY listings allow any authenticated user to submit (no pre-assignment
+//      required). PROJECT listings keep the original "must be an assignee" rule.
 router.post("/:id/submit", authenticate, async (req, res) => {
   try {
     const { id: bountyId } = req.params;
@@ -573,6 +751,8 @@ router.post("/:id/submit", authenticate, async (req, res) => {
         id: true,
         isApproved: true,
         status: true,
+        listingType: true,
+        timeToComplete: true,
         workSubmissions: {
           where: {
             submittedBy: userId,
@@ -585,14 +765,26 @@ router.post("/:id/submit", authenticate, async (req, res) => {
 
     if (!bounty) return res.status(404).json({ error: "Bounty not found" });
 
-    const isAssigned = await prisma.bountyAssignee.findUnique({
-      where: { bountyId_userId: { bountyId, userId } },
-      select: { userId: true },
-    });
-    if (!isAssigned)
-      return res
-        .status(403)
-        .json({ error: "You are not assigned to this bounty" });
+    if (bounty.listingType === "PROJECT") {
+      const isAssigned = await prisma.bountyAssignee.findUnique({
+        where: { bountyId_userId: { bountyId, userId } },
+        select: { userId: true },
+      });
+      if (!isAssigned)
+        return res
+          .status(403)
+          .json({ error: "You are not assigned to this bounty" });
+    } else {
+      // BOUNTY — open submissions, but respect the deadline
+      if (new Date() > new Date(bounty.timeToComplete)) {
+        return res
+          .status(400)
+          .json({
+            error: "The submission deadline for this bounty has passed",
+          });
+      }
+    }
+
     if (!bounty.isApproved)
       return res
         .status(400)
@@ -607,6 +799,11 @@ router.post("/:id/submit", authenticate, async (req, res) => {
         .status(400)
         .json({ error: "You have already submitted work for this bounty" });
     }
+
+    // BOUNTY listings stay open for more submissions until the deadline —
+    // only PROJECT listings flip straight to IN_REVIEW on the single submission.
+    const nextStatus =
+      bounty.listingType === "BOUNTY" ? bounty.status : "IN_REVIEW";
 
     // Transaction: create submission + update status atomically
     const [workSubmission, updatedBounty] = await prisma.$transaction([
@@ -626,7 +823,7 @@ router.post("/:id/submit", authenticate, async (req, res) => {
       }),
       prisma.bounty.update({
         where: { id: bountyId },
-        data: { status: "IN_REVIEW" },
+        data: { status: nextStatus },
         include: {
           createdByUser: {
             select: USER_SELECT_WITH_ROLE,
@@ -660,6 +857,22 @@ router.post("/:id/submit", authenticate, async (req, res) => {
       .status(500)
       .json({ error: "Failed to submit work", details: error.message });
   }
+});
+
+// ─── Submissions are immutable once created ───────────────────────────────────
+// By design, there is no route that lets a submitter edit description or
+// deliverableUrl after POST /:id/submit. Only status/reviewNotes can change,
+// and only via PATCH /submissions/:submissionId/review (creator/admin only).
+// If a submission needs changes, the PROJECT review flow supports
+// status: "needs_revision", after which the submitter can call /:id/submit
+// again as a fresh row — history is preserved, nothing is overwritten in place.
+// This route exists purely to make that immutability explicit and give a
+// clear error instead of a silent 404 if something ever tries to PATCH here.
+router.patch("/submissions/:submissionId", authenticate, async (req, res) => {
+  res.status(405).json({
+    error:
+      "Submissions cannot be edited after creation. Request a revision via the review flow instead.",
+  });
 });
 
 router.get("/my-submissions", authenticate, async (req, res) => {
@@ -749,16 +962,11 @@ router.get("/:id/submissions", authenticate, async (req, res) => {
       orderBy: { submittedAt: "desc" },
     });
 
-    const result = submissions.map((s) => ({
-      ...s,
-      attachments: s.attachments ? JSON.parse(s.attachments) : [],
-    }));
-
     if (cacheKey) {
-      await setCache(cacheKey, result, TTL.SUBMISSIONS);
+      await setCache(cacheKey, submissions, TTL.SUBMISSIONS);
     }
 
-    res.json(result);
+    res.json(submissions);
   } catch (error) {
     console.error("Error fetching submissions:", error);
     res.status(500).json({ error: "Failed to fetch submissions" });
@@ -780,20 +988,15 @@ router.get("/submissions/all", authenticate, isAdmin, async (req, res) => {
       orderBy: { submittedAt: "desc" },
     });
 
-    const result = submissions.map((s) => ({
-      ...s,
-      attachments: s.attachments ? JSON.parse(s.attachments) : [],
-    }));
-
-    await setCache(cacheKey, result, TTL.SUBMISSIONS);
-    res.json(result);
+    await setCache(cacheKey, submissions, TTL.SUBMISSIONS);
+    res.json(submissions);
   } catch (error) {
     console.error("Error fetching all submissions:", error);
     res.status(500).json({ error: "Failed to fetch submissions" });
   }
 });
 
-// ─── Review submission ────────────────────────────────────────────────────────
+// ─── Review submission (PROJECT listings only — BOUNTY uses /select-winners) ──
 router.patch(
   "/submissions/:submissionId/review",
   authenticate,
@@ -811,15 +1014,33 @@ router.patch(
       const submission = await prisma.workSubmission.findUnique({
         where: { id: submissionId },
         include: {
-          bounty: { select: { id: true, createdBy: true, status: true } },
+          bounty: {
+            select: {
+              id: true,
+              createdBy: true,
+              status: true,
+              listingType: true,
+              teamId: true,
+            },
+          },
           submitterUser: { select: USER_SELECT_MINIMAL },
         },
       });
       if (!submission)
         return res.status(404).json({ error: "Submission not found" });
-      if (submission.bounty.createdBy !== userId && userRole !== "ADMIN") {
+      if (!(await canManageBounty(submission.bounty, req.user))) {
         return res.status(403).json({
           error: "You do not have permission to review this submission",
+        });
+      }
+
+      // NEW — BOUNTY listings can have multiple winners and go through the
+      // dedicated /select-winners endpoint instead, so ranks and per-tier
+      // reward amounts are handled correctly.
+      if (submission.bounty.listingType === "BOUNTY") {
+        return res.status(400).json({
+          error:
+            "BOUNTY listings are reviewed via POST /:id/select-winners, not this endpoint",
         });
       }
 
@@ -923,6 +1144,166 @@ router.patch(
     }
   },
 );
+
+// ─── Select winners (BOUNTY listings only) ────────────────────────────────────
+// NEW: replaces single-submission review for contest-style bounties. Takes a
+// list of { submissionId, rank } pairs, validates each rank against the
+// bounty's reward tiers, and snapshots the reward amount onto BountyWinner
+// so later tier edits can't retroactively change a paid-out amount.
+router.post("/:id/select-winners", authenticate, async (req, res) => {
+  try {
+    const { id: bountyId } = req.params;
+    const { winners } = req.body;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    if (!Array.isArray(winners) || winners.length === 0) {
+      return res.status(400).json({
+        error: "winners must be a non-empty array of { submissionId, rank }",
+      });
+    }
+
+    const bounty = await prisma.bounty.findUnique({
+      where: { id: bountyId },
+      select: {
+        id: true,
+        createdBy: true,
+        status: true,
+        listingType: true,
+        teamId: true,
+        rewardTiers: { select: { rank: true, amount: true } },
+        workSubmissions: {
+          where: { status: "pending" },
+          select: { id: true, submittedBy: true },
+        },
+      },
+    });
+    if (!bounty) return res.status(404).json({ error: "Bounty not found" });
+
+    if (!(await canManageBounty(bounty, req.user))) {
+      return res
+        .status(403)
+        .json({ error: "You do not have permission to select winners" });
+    }
+    if (bounty.listingType !== "BOUNTY") {
+      return res.status(400).json({
+        error: "select-winners is only valid for BOUNTY listings",
+      });
+    }
+    if (bounty.status === "DONE") {
+      return res
+        .status(400)
+        .json({ error: "Winners have already been selected for this bounty" });
+    }
+
+    // ── Validate the payload against tiers + pending submissions ────────────
+    const tierByRank = new Map(
+      bounty.rewardTiers.map((t) => [t.rank, t.amount]),
+    );
+    const pendingSubmissionIds = new Set(
+      bounty.workSubmissions.map((s) => s.id),
+    );
+
+    const seenRanks = new Set();
+    const seenSubmissions = new Set();
+
+    for (const w of winners) {
+      if (!w.submissionId || !Number.isInteger(w.rank)) {
+        return res.status(400).json({
+          error: "Each winner entry needs a submissionId and an integer rank",
+        });
+      }
+      if (!tierByRank.has(w.rank)) {
+        return res
+          .status(400)
+          .json({ error: `Rank ${w.rank} has no matching reward tier` });
+      }
+      if (!pendingSubmissionIds.has(w.submissionId)) {
+        return res.status(400).json({
+          error: `Submission ${w.submissionId} is not a pending submission for this bounty`,
+        });
+      }
+      if (seenRanks.has(w.rank)) {
+        return res
+          .status(400)
+          .json({ error: `Rank ${w.rank} was assigned more than once` });
+      }
+      if (seenSubmissions.has(w.submissionId)) {
+        return res.status(400).json({
+          error: `Submission ${w.submissionId} was assigned more than one rank`,
+        });
+      }
+      seenRanks.add(w.rank);
+      seenSubmissions.add(w.submissionId);
+    }
+
+    const submissionById = new Map(
+      bounty.workSubmissions.map((s) => [s.id, s.submittedBy]),
+    );
+
+    const [createdWinners, updatedBounty] = await prisma.$transaction(
+      async (tx) => {
+        const created = [];
+        for (const w of winners) {
+          const record = await tx.bountyWinner.create({
+            data: {
+              bountyId,
+              submissionId: w.submissionId,
+              userId: submissionById.get(w.submissionId),
+              rank: w.rank,
+              rewardAmount: tierByRank.get(w.rank),
+            },
+          });
+          created.push(record);
+        }
+
+        // Mark winning submissions approved, everything else pending → rejected
+        await tx.workSubmission.updateMany({
+          where: { id: { in: [...seenSubmissions] } },
+          data: { status: "approved" },
+        });
+        await tx.workSubmission.updateMany({
+          where: {
+            bountyId,
+            status: "pending",
+            id: { notIn: [...seenSubmissions] },
+          },
+          data: { status: "rejected" },
+        });
+
+        const updBounty = await tx.bounty.update({
+          where: { id: bountyId },
+          data: { status: "DONE", completedAt: new Date() },
+          include: {
+            createdByUser: { select: USER_SELECT_WITH_ROLE },
+            rewardTiers: { orderBy: { rank: "asc" } },
+            winners: {
+              orderBy: { rank: "asc" },
+              include: {
+                user: { select: USER_SELECT_BASIC },
+              },
+            },
+          },
+        });
+
+        return [created, updBounty];
+      },
+    );
+
+    sendRealtimeUpdate("bounty_winners_selected", updatedBounty, userId);
+    await invalidateBounty(bountyId);
+    await invalidateSubmissions(bountyId);
+
+    res.json({
+      message: "Winners selected successfully",
+      winners: createdWinners,
+      bounty: updatedBounty,
+    });
+  } catch (error) {
+    console.error("Error selecting winners:", error);
+    res.status(500).json({ error: "Failed to select winners" });
+  }
+});
 
 // ─── Fetch all users ──────────────────────────────────────────────────────────
 router.get("/users", async (req, res) => {
@@ -1321,15 +1702,25 @@ router.delete(
 );
 
 // ─── Apply to bounty ──────────────────────────────────────────────────────────
+// NEW: BOUNTY listings don't take applications — submissions are open, so
+// applying doesn't make sense there. Only PROJECT listings can be applied to.
 router.post("/apply", authenticate, async (req, res) => {
   try {
     const { bountyId, applicantId, message } = req.body;
 
     const bounty = await prisma.bounty.findUnique({
       where: { id: bountyId },
-      select: { id: true, assignee: true, createdBy: true },
+      select: { id: true, assignee: true, createdBy: true, listingType: true },
     });
     if (!bounty) return res.status(404).json({ error: "Bounty not found" });
+
+    if (bounty.listingType === "BOUNTY") {
+      return res.status(400).json({
+        error:
+          "BOUNTY listings are open for direct submissions — no application needed",
+      });
+    }
+
     if (bounty.assignee)
       return res.status(400).json({ error: "Bounty already assigned" });
     if (bounty.createdBy === applicantId)
@@ -1383,6 +1774,11 @@ router.get("/export-payments", authenticate, isAdmin, async (req, res) => {
             },
           },
         },
+        winners: {
+          include: {
+            user: { select: USER_SELECT_EXPORT },
+          },
+        },
       },
       orderBy: { paidAt: "desc" },
     });
@@ -1409,6 +1805,11 @@ router.get("/export-completed", authenticate, isAdmin, async (req, res) => {
             user: {
               select: USER_SELECT_EXPORT,
             },
+          },
+        },
+        winners: {
+          include: {
+            user: { select: USER_SELECT_EXPORT },
           },
         },
       },
@@ -1492,6 +1893,15 @@ router.get("/:id", async (req, res) => {
         createdByUser: {
           select: USER_SELECT_WITH_ROLE,
         },
+        rewardTiers: {
+          orderBy: { rank: "asc" },
+        },
+        winners: {
+          orderBy: { rank: "asc" },
+          include: {
+            user: { select: USER_SELECT_BASIC },
+          },
+        },
       },
     });
 
@@ -1506,7 +1916,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // ─── Edit bounty (Admin) ──────────────────────────────────────────────────────
-router.put("/:id", authenticate, isAdmin, async (req, res) => {
+router.put("/:id", authenticate, requireBountyManager, async (req, res) => {
   try {
     if (
       req.body.chain !== undefined &&

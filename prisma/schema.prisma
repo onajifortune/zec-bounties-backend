@@ -18,11 +18,12 @@ model BountyCategory {
 model User {
   id                   String              @id @default(cuid())
   name                 String
-  email                String              @unique
+  email                String?              @unique
   emailNotifications   Boolean             @default(true)
   password             String?
   nickname             String?             @unique
   role                 UserRole            @default(CLIENT)
+  roleSelectedAt       DateTime?
   createdAt            DateTime            @default(now())
   z_address            String?
   UA_address           String?
@@ -41,6 +42,7 @@ model User {
   ofacVerified         Boolean             @default(false)
   teamMembers          TeamMember[]        @relation("UserTeams")
   badges               Json                @default("[]")
+  bountyWins           BountyWinner[]      @relation("UserBountyWins")
 }
 
 model Bounty {
@@ -62,6 +64,11 @@ model Bounty {
   assignee          String?
   chain             Chain               @default(MAIN)
   difficulty        Difficulty          @default(EASY)
+  // ─── Day 1: contest-bounty foundation ─────────────────────────────────────
+  listingType       ListingType         @default(PROJECT)
+  maxWinners        Int                 @default(1)
+  reviewWindowDays  Int?
+  // ────────────────────────────────────────────────────────────────────────
   assigneeUser      User?               @relation("AssignedBounties", fields: [assignee], references: [id])
   createdByUser     User                @relation("CreatedBounties", fields: [createdBy], references: [id])
   category          BountyCategory?     @relation("BountyCategory", fields: [categoryId], references: [name])
@@ -70,13 +77,23 @@ model Bounty {
   assignees         BountyAssignee[]
   completedAt       DateTime?
   updatedAt         DateTime  @updatedAt @default(now())
-  
+  // ─── Day 2: reward tiers & winners ─────────────────────────────────────────
+  rewardTiers       BountyRewardTier[]  @relation("BountyRewardTiers")
+  winners           BountyWinner[]      @relation("BountyWinners")
+  // ────────────────────────────────────────────────────────────────────────
+  // ─── Teams/Hunter feature: bounty attributed to a Team account ────────────
+  teamId            String?
+  team              Team?               @relation("TeamBounties", fields: [teamId], references: [id])
+  // ────────────────────────────────────────────────────────────────────────
+
   @@index([status])
   @@index([createdBy])
   @@index([assignee])
   @@index([dateCreated])
   @@index([isPaid, paidAt])
   @@index([completedAt])
+  @@index([listingType])
+  @@index([teamId])
 }
 
 model BountyAssignee {
@@ -136,6 +153,8 @@ model WorkSubmission {
   reviewerUser   User?     @relation("ReviewedWork", fields: [reviewedBy], references: [id])
   submitterUser  User      @relation("SubmittedWork", fields: [submittedBy], references: [id])
   bounty         Bounty    @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  // ─── Day 2: winner link ─────────────────────────────────────────────────
+  winner         BountyWinner?
 
   @@map("work_submissions")
 
@@ -171,6 +190,7 @@ model Team {
   updatedAt   DateTime     @updatedAt
   members     TeamMember[]
   wallet      TeamWallet?
+  bounties    Bounty[]     @relation("TeamBounties")
 
   @@map("teams")
 }
@@ -204,12 +224,49 @@ model TeamWallet {
   @@map("team_wallets")
 }
 
+// ─── Day 2: Contest bounty reward structure ───────────────────────────────────
+
+model BountyRewardTier {
+  id       String @id @default(cuid())
+  bountyId String
+  rank     Int              // 1 = first place, 2 = second, etc.
+  amount   Float
+  bounty   Bounty @relation("BountyRewardTiers", fields: [bountyId], references: [id], onDelete: Cascade)
+
+  @@unique([bountyId, rank])
+  @@map("bounty_reward_tiers")
+  @@index([bountyId])
+}
+
+model BountyWinner {
+  id           String    @id @default(cuid())
+  bountyId     String
+  submissionId String    @unique   // a submission can only win one rank
+  userId       String
+  rank         Int
+  rewardAmount Float                // snapshot — decoupled from tier, safe if tiers ever change later
+  selectedAt   DateTime  @default(now())
+  isPaid       Boolean   @default(false)
+  paidAt       DateTime?
+
+  bounty       Bounty         @relation("BountyWinners", fields: [bountyId], references: [id], onDelete: Cascade)
+  submission   WorkSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  user         User           @relation("UserBountyWins", fields: [userId], references: [id])
+
+  @@unique([bountyId, rank])   // one winner per rank per bounty
+  @@map("bounty_winners")
+  @@index([bountyId])
+  @@index([userId])
+}
+
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
 enum UserRole {
+  PENDING
+  HUNTER
   CLIENT
-  ADMIN
   TEAM
+  ADMIN
 }
 
 enum Chain {
@@ -229,4 +286,9 @@ enum Status {
   IN_REVIEW
   DONE
   CANCELLED
+}
+
+enum ListingType {
+  PROJECT 
+  BOUNTY 
 }
