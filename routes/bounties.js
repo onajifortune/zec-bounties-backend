@@ -1412,7 +1412,7 @@ router.get("/export-completed", authenticate, isAdmin, async (req, res) => {
           },
         },
       },
-      orderBy: { dateCreated: "desc" },
+      orderBy: { completedAt: "desc" },
     });
     res.json({ success: true, data: bounties });
   } catch (error) {
