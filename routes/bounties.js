@@ -96,6 +96,18 @@ const invalidateSubmissions = async (bountyId, submittedBy) => {
   ]);
 };
 
+async function canManageBounty(bounty, user) {
+  if (user.role === "ADMIN") return true;
+  if (bounty.createdBy === user.id) return true;
+  if (bounty.teamId) {
+    const member = await prisma.teamMember.findUnique({
+      where: { teamId_userId: { teamId: bounty.teamId, userId: user.id } },
+    });
+    if (member && ["OWNER", "ADMIN"].includes(member.role)) return true;
+  }
+  return false;
+}
+
 // ─── Create bounty ────────────────────────────────────────────────────────────
 router.post("/", authenticate, async (req, res) => {
   try {
@@ -107,11 +119,30 @@ router.post("/", authenticate, async (req, res) => {
       assignee,
       isApproved,
       categoryId,
-      chain, // NEW
+      chain,
+      teamId,
     } = req.body;
 
     if (chain && !["MAIN", "TEST"].includes(chain)) {
       return res.status(400).json({ error: "Invalid chain value" });
+    }
+
+    // If a teamId was given, confirm it exists and the creator is actually
+    // a member (global admins can post on behalf of any team)
+    if (teamId) {
+      const team = await prisma.team.findUnique({ where: { id: teamId } });
+      if (!team) return res.status(404).json({ error: "Team not found" });
+
+      if (req.user.role !== "ADMIN") {
+        const membership = await prisma.teamMember.findUnique({
+          where: { teamId_userId: { teamId, userId: req.user.id } },
+        });
+        if (!membership) {
+          return res
+            .status(403)
+            .json({ error: "You are not a member of this team" });
+        }
+      }
     }
 
     const resolvedAssignee = assignee === "none" ? null : assignee;
@@ -127,7 +158,8 @@ router.post("/", authenticate, async (req, res) => {
         assignee: resolvedAssignee,
         isApproved,
         categoryId,
-        ...(chain && { chain }), // NEW — falls back to schema default (TEST) if omitted
+        ...(chain && { chain }),
+        ...(teamId && { teamId }),
         ...(isClient &&
           resolvedAssignee && {
             assignees: {
@@ -147,6 +179,7 @@ router.post("/", authenticate, async (req, res) => {
         assigneeUser: {
           select: USER_SELECT_FULL,
         },
+        team: { select: { id: true, name: true, logo: true } },
       },
     });
 
@@ -209,10 +242,10 @@ router.get("/", async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+    const teamId = req.query.teamId || undefined;
 
-    const cacheKey = `bounties:${JSON.stringify({ page, limit })}`;
+    const cacheKey = `bounties:${JSON.stringify({ page, limit, teamId })}`;
 
-    // 1. CHECK CACHE FIRST
     const cached = await getCache(cacheKey);
     if (cached) {
       console.log("Cache Hit");
@@ -220,12 +253,12 @@ router.get("/", async (req, res) => {
     }
     console.log("Cache Miss");
 
-    // 2. DB FALLBACK
     const [bounties, total] = await Promise.all([
       prisma.bounty.findMany({
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { dateCreated: "desc" },
+        ...(teamId && { where: { teamId } }),
         include: {
           assignees: {
             include: { user: { select: USER_SELECT } },
@@ -236,14 +269,14 @@ router.get("/", async (req, res) => {
           createdByUser: {
             select: USER_SELECT_WITH_ROLE,
           },
+          team: { select: { id: true, name: true, logo: true } },
         },
       }),
-      prisma.bounty.count(),
+      prisma.bounty.count({ ...(teamId && { where: { teamId } }) }),
     ]);
 
     const result = { data: bounties, total, page, limit };
 
-    // 3. STORE IN CACHE
     await setCache(cacheKey, result, TTL.BOUNTY_LIST);
 
     res.json(result);
@@ -1194,91 +1227,89 @@ router.get("/:bountyId/applications", authenticate, async (req, res) => {
 });
 
 // ─── Update application status (Admin) ───────────────────────────────────────
-router.put(
-  "/applications/:applicationId",
-  authenticate,
-  isAdmin,
-  async (req, res) => {
-    try {
-      const { applicationId } = req.params;
-      const { status } = req.body;
+router.put("/applications/:applicationId", authenticate, async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+    const { status } = req.body;
 
-      const application = await prisma.bountyApplication.findUnique({
+    const application = await prisma.bountyApplication.findUnique({
+      where: { id: applicationId },
+      select: {
+        id: true,
+        bountyId: true,
+        applicantId: true,
+        bounty: { select: { title: true, createdBy: true, teamId: true } },
+      },
+    });
+    if (!application)
+      return res.status(404).json({ error: "Application not found" });
+
+    if (!(await canManageBounty(application.bounty, req.user))) {
+      return res.status(403).json({
+        error: "You do not have permission to manage this application",
+      });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.bountyApplication.update({
         where: { id: applicationId },
-        select: {
-          id: true,
-          bountyId: true,
-          applicantId: true,
-          bounty: { select: { title: true } },
+        data: { status, reviewedAt: new Date(), reviewedBy: req.user.id },
+        include: {
+          applicantUser: { select: USER_SELECT_MINIMAL },
         },
       });
-      if (!application)
-        return res.status(404).json({ error: "Application not found" });
 
-      const result = await prisma.$transaction(async (tx) => {
-        const updated = await tx.bountyApplication.update({
-          where: { id: applicationId },
-          data: { status, reviewedAt: new Date(), reviewedBy: req.user.id },
-          include: {
-            applicantUser: { select: USER_SELECT_MINIMAL },
-          },
-        });
-
-        if (status === "accepted") {
-          await tx.bountyAssignee.upsert({
-            where: {
-              bountyId_userId: {
-                bountyId: application.bountyId,
-                userId: application.applicantId,
-              },
-            },
-            update: {},
-            create: {
+      if (status === "accepted") {
+        await tx.bountyAssignee.upsert({
+          where: {
+            bountyId_userId: {
               bountyId: application.bountyId,
               userId: application.applicantId,
             },
-          });
-          await tx.bounty.update({
-            where: { id: application.bountyId },
-            data: { status: "IN_PROGRESS" },
-          });
-        }
-        return updated;
-      });
-      await invalidateApplications(
-        application.applicantId,
-        application.bountyId,
-      );
-      await invalidateBounty(application.bountyId);
+          },
+          update: {},
+          create: {
+            bountyId: application.bountyId,
+            userId: application.applicantId,
+          },
+        });
+        await tx.bounty.update({
+          where: { id: application.bountyId },
+          data: { status: "IN_PROGRESS" },
+        });
+      }
+      return updated;
+    });
+    await invalidateApplications(application.applicantId, application.bountyId);
+    await invalidateBounty(application.bountyId);
 
-      sendRealtimeUpdate("application_updated", result, req.user.id);
-      res.json(result);
+    sendRealtimeUpdate("application_updated", result, req.user.id);
+    res.json(result);
 
-      // Fire-and-forget — applicant just got assigned via acceptance
-      if (status === "accepted" && result.applicantUser?.email) {
-        const recipient = result.applicantUser;
-        const bountyTitle = application.bounty?.title ?? "a bounty";
-        sendMail({
-          to: recipient.email,
-          subject: `You've been assigned: ${bountyTitle}`,
-          text: `Hi ${recipient.nickname || recipient.name},\n\nYour application was accepted and you've been assigned to "${bountyTitle}". You can start working on it now.`,
-          html: `
+    // Fire-and-forget — applicant just got assigned via acceptance
+    if (status === "accepted" && result.applicantUser?.email) {
+      const recipient = result.applicantUser;
+      const bountyTitle = application.bounty?.title ?? "a bounty";
+      sendMail({
+        to: recipient.email,
+        subject: `You've been assigned: ${bountyTitle}`,
+        text: `Hi ${recipient.nickname || recipient.name},\n\nYour application was accepted and you've been assigned to "${bountyTitle}". You can start working on it now.`,
+        html: `
             <h2>You've been assigned a bounty</h2>
             <p>Hi ${recipient.nickname || recipient.name},</p>
             <p>Your application was accepted and you've been assigned to:</p>
             <p><strong>${bountyTitle}</strong></p>
             <p>You can start working on it now.</p>
           `,
-        }).catch((mailErr) =>
-          console.error("Assignment notification email failed:", mailErr),
-        );
-      }
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: err.message });
+      }).catch((mailErr) =>
+        console.error("Assignment notification email failed:", mailErr),
+      );
     }
-  },
-);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── Withdraw application (applicant only) ────────────────────────────────────
 router.delete(
@@ -1492,6 +1523,7 @@ router.get("/:id", async (req, res) => {
         createdByUser: {
           select: USER_SELECT_WITH_ROLE,
         },
+        team: { select: { id: true, name: true, logo: true } },
       },
     });
 
@@ -1506,13 +1538,37 @@ router.get("/:id", async (req, res) => {
 });
 
 // ─── Edit bounty (Admin) ──────────────────────────────────────────────────────
-router.put("/:id", authenticate, isAdmin, async (req, res) => {
+router.put("/:id", authenticate, async (req, res) => {
   try {
+    const existing = await prisma.bounty.findUnique({
+      where: { id: req.params.id },
+      select: { createdBy: true, teamId: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Bounty not found" });
+
+    if (!(await canManageBounty(existing, req.user))) {
+      return res
+        .status(403)
+        .json({ error: "You do not have permission to edit this bounty" });
+    }
+
+    // Only global admins may reassign a bounty's approval/status via this route
+    if (req.body.isApproved !== undefined && req.user.role !== "ADMIN") {
+      return res
+        .status(403)
+        .json({ error: "Only admins can change approval status" });
+    }
+
     if (
       req.body.chain !== undefined &&
       !["MAIN", "TEST"].includes(req.body.chain)
     ) {
       return res.status(400).json({ error: "Invalid chain value" });
+    }
+
+    if (req.body.teamId && req.user.role !== "ADMIN") {
+      // Non-admins can't move a bounty to a different team via edit
+      return res.status(403).json({ error: "Cannot reassign team" });
     }
 
     const { notifyUsers = false } = req.body;
@@ -1548,6 +1604,9 @@ router.put("/:id", authenticate, isAdmin, async (req, res) => {
         }),
         ...(req.body.assignee !== undefined && { assignee: req.body.assignee }),
         ...(req.body.chain !== undefined && { chain: req.body.chain }),
+        ...(req.body.teamId !== undefined && {
+          teamId: req.body.teamId || null,
+        }),
         ...(req.body.isApproved !== undefined && {
           isApproved: req.body.isApproved,
           status: nextStatus,
@@ -1557,6 +1616,7 @@ router.put("/:id", authenticate, isAdmin, async (req, res) => {
         assignees: {
           include: { user: { select: USER_SELECT_FULL } },
         },
+        team: { select: { id: true, name: true, logo: true } },
       },
     });
 

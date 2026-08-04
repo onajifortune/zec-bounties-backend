@@ -23,6 +23,9 @@ const allowedOrigins = [
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 
+// Serve uploaded assets (team logos, etc.) statically
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
 app.get("/", (req, res) => {
   res.json({
     status: "Server is running",
