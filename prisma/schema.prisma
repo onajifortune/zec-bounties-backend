@@ -42,6 +42,8 @@ model User {
   teamMembers          TeamMember[]        @relation("UserTeams")
   badges               Json                @default("[]")
   favoriteTeams        TeamFavorite[]      @relation("UserFavoriteTeams")
+  communities          CommunityMember[] @relation("UserCommunities")
+
 }
 
 model Bounty {
@@ -73,6 +75,7 @@ model Bounty {
   assignees         BountyAssignee[]
   completedAt       DateTime?
   updatedAt         DateTime  @updatedAt @default(now())
+  isPrivate         Boolean             @default(false)
 
   @@index([status])
   @@index([createdBy])
@@ -81,6 +84,7 @@ model Bounty {
   @@index([isPaid, paidAt])
   @@index([completedAt])
   @@index([teamId])
+  @@index([isPrivate])
 }
 
 model BountyAssignee {
@@ -179,6 +183,8 @@ model Team {
   wallet      TeamWallet?
   bounties    Bounty[]     @relation("TeamBounties")
   favoritedBy TeamFavorite[] @relation("TeamFavoritedBy")
+  communityMembers CommunityMember[] @relation("TeamCommunity")
+
 
   @@map("teams")
 }
@@ -226,6 +232,22 @@ model TeamWallet {
   team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   @@map("team_wallets")
+}
+
+model CommunityMember {
+  id       String   @id @default(cuid())
+  teamId   String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  team Team @relation("TeamCommunity", fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation("UserCommunities", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@map("community_members")
+
+  @@index([teamId])
+  @@index([userId])
 }
 
 // ─── Enums ───────────────────────────────────────────────────────────────────

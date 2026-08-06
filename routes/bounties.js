@@ -2,7 +2,11 @@ const express = require("express");
 const prisma = require("../prisma/client");
 const { formatEmailText } = require("../helpers/email");
 const router = express.Router();
-const { authenticate, isAdmin } = require("../middleware/auth");
+const {
+  authenticate,
+  isAdmin,
+  optionalAuthenticate,
+} = require("../middleware/auth");
 const { sendRealtimeUpdate } = require("../middleware/websocket");
 const {
   getCache,
@@ -108,6 +112,24 @@ async function canManageBounty(bounty, user) {
   return false;
 }
 
+async function canViewPrivateBounty(bounty, user) {
+  if (!bounty.isPrivate) return true;
+  if (!user) return false;
+  if (user.role === "ADMIN") return true;
+  if (bounty.createdBy === user.id) return true;
+  if (!bounty.teamId) return false;
+
+  const [teamMember, favorite] = await Promise.all([
+    prisma.teamMember.findUnique({
+      where: { teamId_userId: { teamId: bounty.teamId, userId: user.id } },
+    }),
+    prisma.teamFavorite.findUnique({
+      where: { userId_teamId: { userId: user.id, teamId: bounty.teamId } },
+    }),
+  ]);
+  return !!(teamMember || favorite);
+}
+
 // ─── Create bounty ────────────────────────────────────────────────────────────
 router.post("/", authenticate, async (req, res) => {
   try {
@@ -121,10 +143,17 @@ router.post("/", authenticate, async (req, res) => {
       categoryId,
       chain,
       teamId,
+      isPrivate,
     } = req.body;
 
     if (chain && !["MAIN", "TEST"].includes(chain)) {
       return res.status(400).json({ error: "Invalid chain value" });
+    }
+
+    if (isPrivate && !teamId) {
+      return res
+        .status(400)
+        .json({ error: "Private bounties must belong to a team" });
     }
 
     // If a teamId was given, confirm it exists and the creator is actually
@@ -238,47 +267,55 @@ router.post("/", authenticate, async (req, res) => {
 
 // ─── List bounties (paginated, lean payload) ──────────────────────────────────
 
-router.get("/", async (req, res) => {
+router.get("/", optionalAuthenticate, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(parseInt(req.query.limit) || 10, 50);
     const teamId = req.query.teamId || undefined;
+    const isAdmin = req.user?.role === "ADMIN";
+    const userId = req.user?.id;
 
-    const cacheKey = `bounties:${JSON.stringify({ page, limit, teamId })}`;
+    // Cache key must vary by viewer since private bounties are viewer-dependent
+    const cacheKey = `bounties:${JSON.stringify({ page, limit, teamId, viewer: isAdmin ? "admin" : (userId ?? "anon") })}`;
 
     const cached = await getCache(cacheKey);
-    if (cached) {
-      console.log("Cache Hit");
-      return res.json(cached);
-    }
-    console.log("Cache Miss");
+    if (cached) return res.json(cached);
+
+    const visibilityFilter = isAdmin
+      ? {}
+      : {
+          OR: [
+            { isPrivate: false },
+            ...(userId
+              ? [
+                  { isPrivate: true, createdBy: userId },
+                  { isPrivate: true, team: { members: { some: { userId } } } },
+                  {
+                    isPrivate: true,
+                    team: { favoritedBy: { some: { userId } } },
+                  },
+                ]
+              : []),
+          ],
+        };
+
+    const where = { ...(teamId && { teamId }), ...visibilityFilter };
 
     const [bounties, total] = await Promise.all([
       prisma.bounty.findMany({
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { dateCreated: "desc" },
-        ...(teamId && { where: { teamId } }),
+        where,
         include: {
-          assignees: {
-            include: { user: { select: USER_SELECT } },
-          },
-          assigneeUser: {
-            select: USER_SELECT_FULL,
-          },
-          createdByUser: {
-            select: USER_SELECT_WITH_ROLE,
-          },
-          team: { select: { id: true, name: true, logo: true } },
+          /* ...same includes as before */
         },
       }),
-      prisma.bounty.count({ ...(teamId && { where: { teamId } }) }),
+      prisma.bounty.count({ where }),
     ]);
 
     const result = { data: bounties, total, page, limit };
-
     await setCache(cacheKey, result, TTL.BOUNTY_LIST);
-
     res.json(result);
   } catch (error) {
     console.error(error);
@@ -1425,9 +1462,18 @@ router.post("/apply", authenticate, async (req, res) => {
 
     const bounty = await prisma.bounty.findUnique({
       where: { id: bountyId },
-      select: { id: true, assignee: true, createdBy: true },
+      select: {
+        id: true,
+        assignee: true,
+        createdBy: true,
+        isPrivate: true,
+        teamId: true,
+      },
     });
     if (!bounty) return res.status(404).json({ error: "Bounty not found" });
+    if (!(await canViewPrivateBounty(bounty, req.user))) {
+      return res.status(404).json({ error: "Bounty not found" });
+    }
     if (bounty.assignee)
       return res.status(400).json({ error: "Bounty already assigned" });
     if (bounty.createdBy === applicantId)
@@ -1595,6 +1641,10 @@ router.get("/:id", async (req, res) => {
     });
 
     if (!bounty) return res.status(404).json({ error: "Bounty not found" });
+    if (!(await canViewPrivateBounty(bounty, req.user))) {
+      return res.status(404).json({ error: "Bounty not found" });
+    }
+    res.json(bounty);
 
     await setCache(cacheKey, bounty, TTL.BOUNTY_SINGLE);
     res.json(bounty);

@@ -318,14 +318,10 @@ router.get("/public", async (req, res) => {
         description: true,
         logo: true,
         _count: {
-          select: {
-            members: true,
-          },
+          select: { members: true, favoritedBy: true },
         },
       },
-      orderBy: {
-        name: "asc",
-      },
+      orderBy: { name: "asc" },
     });
 
     res.json(
@@ -335,14 +331,12 @@ router.get("/public", async (req, res) => {
         description: t.description,
         logo: t.logo,
         memberCount: t._count.members,
+        communityCount: t._count.favoritedBy,
       })),
     );
   } catch (err) {
     console.error(err);
-
-    res.status(500).json({
-      error: "Failed to fetch teams",
-    });
+    res.status(500).json({ error: "Failed to fetch teams" });
   }
 });
 
@@ -401,6 +395,8 @@ router.post("/:teamId/favorite", authenticate, async (req, res) => {
       },
     });
 
+    await deleteCacheByPattern("bounties:*");
+
     sendToUser(req.user.id, "team_favorited", {
       teamId,
     });
@@ -447,6 +443,83 @@ router.delete("/:teamId/favorite", authenticate, async (req, res) => {
     res.status(500).json({
       error: "Failed to unfavorite team",
     });
+  }
+});
+
+// ─── Community ───────────────────────────────────────────────────────────────
+// NOTE: place this block above `router.get("/:teamId", ...)`
+
+router.get("/community", authenticate, async (req, res) => {
+  try {
+    const memberships = await prisma.communityMember.findMany({
+      where: { userId: req.user.id },
+      select: { teamId: true },
+    });
+    res.json({ communities: memberships.map((m) => m.teamId) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch communities" });
+  }
+});
+
+router.post("/:teamId/community/join", authenticate, async (req, res) => {
+  try {
+    const { teamId } = req.params;
+    const team = await prisma.team.findUnique({ where: { id: teamId } });
+    if (!team) return res.status(404).json({ error: "Team not found" });
+
+    await prisma.communityMember.upsert({
+      where: { teamId_userId: { teamId, userId: req.user.id } },
+      update: {},
+      create: { teamId, userId: req.user.id },
+    });
+
+    sendToUser(req.user.id, "community_joined", { teamId });
+    res.status(201).json({ success: true, teamId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to join community" });
+  }
+});
+
+router.delete("/:teamId/community/leave", authenticate, async (req, res) => {
+  try {
+    const { teamId } = req.params;
+    await prisma.communityMember
+      .delete({ where: { teamId_userId: { teamId, userId: req.user.id } } })
+      .catch(() => {});
+    sendToUser(req.user.id, "community_left", { teamId });
+    res.json({ success: true, teamId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to leave community" });
+  }
+});
+
+router.get("/:teamId/community/members", authenticate, async (req, res) => {
+  try {
+    const { teamId } = req.params;
+    if (!(await requireTeamAdmin(teamId, req, res))) return;
+
+    const members = await prisma.communityMember.findMany({
+      where: { teamId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            nickname: true,
+            email: true,
+            avatar: true,
+          },
+        },
+      },
+      orderBy: { joinedAt: "desc" },
+    });
+    res.json({ success: true, members });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch community members" });
   }
 });
 

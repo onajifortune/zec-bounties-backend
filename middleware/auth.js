@@ -17,4 +17,18 @@ function isAdmin(req, res, next) {
   next();
 }
 
-module.exports = { authenticate, isAdmin };
+function optionalAuthenticate(req, res, next) {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+  try {
+    req.user = jwt.verify(token, SECRET);
+  } catch {
+    req.user = null; // invalid/expired token — treat as anonymous, don't 401
+  }
+  next();
+}
+
+module.exports = { authenticate, isAdmin, optionalAuthenticate };
