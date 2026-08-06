@@ -13,6 +13,23 @@ const {
 } = require("../utils/cache");
 const sendMail = require("../utils/sendMail");
 
+// ─── Email settings ───────────────────────────────────────────────────────────
+const ENABLE_EMAILS_IN_DEV = false; // Set to true when you want to test emails
+
+const shouldSendEmails =
+  process.env.NODE_ENV === "production" || ENABLE_EMAILS_IN_DEV;
+
+const sendMailIfEnabled = async (options) => {
+  if (!shouldSendEmails) {
+    console.log(
+      `[EMAIL SKIPPED] ${options.subject} -> ${options.to} (NODE_ENV=${process.env.NODE_ENV})`,
+    );
+    return;
+  }
+
+  return sendMail(options);
+};
+
 // ─── Reusable select shapes (avoids re-typing & keeps payloads small) ─────────
 const USER_SELECT = { id: true, name: true, nickname: true, avatar: true };
 
@@ -176,7 +193,7 @@ router.post("/", authenticate, async (req, res) => {
 
         await Promise.all(
           recipients.map((recipient) =>
-            sendMail({
+            sendMailIfEnabled({
               to: recipient,
               subject: `New Bounty Created: ${bounty.title}`,
               text: `A new bounty has been created.\n\nCreated by: ${creatorDisplayName}\n\nTitle: ${bounty.title}\nAmount: ${bounty.bountyAmount}`,
@@ -341,7 +358,7 @@ router.post("/:id/assignees", authenticate, isAdmin, async (req, res) => {
 
         for (const a of added) {
           emailJobs.push(
-            sendMail({
+            sendMailIfEnabled({
               to: a.user.email,
               subject: `🎉 You've been assigned: ${bounty.title}`,
               text: `Hi ${a.user.nickname || a.user.name},\n\nCongratulations! You've been assigned to "${bounty.title}". You can start working on it now.`,
@@ -358,7 +375,7 @@ router.post("/:id/assignees", authenticate, isAdmin, async (req, res) => {
 
         for (const a of removed) {
           emailJobs.push(
-            sendMail({
+            sendMailIfEnabled({
               to: a.user.email,
               subject: `Removed from bounty: ${bounty.title}`,
               text: `Hi ${a.user.nickname || a.user.name},\n\nYou've been removed from "${bounty.title}". Reach out to the bounty creator if you have questions.`,
@@ -1325,7 +1342,7 @@ router.put(
       if (status === "accepted" && result.applicantUser?.email) {
         const recipient = result.applicantUser;
         const bountyTitle = application.bounty?.title ?? "a bounty";
-        sendMail({
+        sendMailIfEnabled({
           to: recipient.email,
           subject: `You've been assigned: ${bountyTitle}`,
           text: `Hi ${recipient.nickname || recipient.name},\n\nYour application was accepted and you've been assigned to "${bountyTitle}". You can start working on it now.`,
@@ -1667,7 +1684,7 @@ router.put("/:id", authenticate, isAdmin, async (req, res) => {
         if (recipients.length > 0) {
           Promise.all(
             recipients.map((u) =>
-              sendMail({
+              sendMailIfEnabled({
                 to: u.email,
                 subject: `Bounty update: ${updated.title}`,
                 text: `Hi ${u.nickname || u.name},\n\n"${updated.title}" was updated:\n\n${changes.map((c) => `- ${c}`).join("\n")}`,
