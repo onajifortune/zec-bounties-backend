@@ -957,6 +957,73 @@ router.patch(
   },
 );
 
+// ─── Edit submission (submitter only, within 15 min of submission) ────────────
+router.patch("/submissions/:submissionId", authenticate, async (req, res) => {
+  try {
+    const { submissionId } = req.params;
+    const { description, deliverableUrl } = req.body;
+    const userId = req.user.id;
+
+    if (!description?.trim()) {
+      return res.status(400).json({ error: "Work description is required" });
+    }
+
+    const submission = await prisma.workSubmission.findUnique({
+      where: { id: submissionId },
+      select: {
+        id: true,
+        submittedBy: true,
+        submittedAt: true,
+        bountyId: true,
+        status: true,
+      },
+    });
+    if (!submission)
+      return res.status(404).json({ error: "Submission not found" });
+
+    if (submission.submittedBy !== userId) {
+      return res
+        .status(403)
+        .json({ error: "You can only edit your own submission" });
+    }
+
+    const EDIT_WINDOW_MS = 15 * 60 * 1000;
+    const elapsed = Date.now() - new Date(submission.submittedAt).getTime();
+    if (elapsed > EDIT_WINDOW_MS) {
+      return res.status(400).json({ error: "Edit window has expired" });
+    }
+
+    // Optional: only allow editing while still pending review
+    if (submission.status !== "pending") {
+      return res
+        .status(400)
+        .json({ error: "Submission has already been reviewed" });
+    }
+
+    const updated = await prisma.workSubmission.update({
+      where: { id: submissionId },
+      data: {
+        description: description.trim(),
+        deliverableUrl: deliverableUrl?.trim() || null,
+      },
+      include: {
+        submitterUser: { select: USER_SELECT_BASIC },
+      },
+    });
+
+    sendRealtimeUpdate("submission_edited", updated, userId);
+    await invalidateSubmissions(submission.bountyId, userId);
+
+    res.json({
+      message: "Submission updated successfully",
+      workSubmission: updated,
+    });
+  } catch (error) {
+    console.error("Error editing submission:", error);
+    res.status(500).json({ error: "Failed to edit submission" });
+  }
+});
+
 // ─── Fetch all users ──────────────────────────────────────────────────────────
 router.get("/users", async (req, res) => {
   try {
