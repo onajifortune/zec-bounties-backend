@@ -189,6 +189,7 @@ router.post("/", authenticate, async (req, res) => {
         categoryId,
         ...(chain && { chain }),
         ...(teamId && { teamId }),
+        isPrivate: team?.isPrivate ?? false,
         ...(isClient &&
           resolvedAssignee && {
             assignees: {
@@ -308,7 +309,16 @@ router.get("/", optionalAuthenticate, async (req, res) => {
         orderBy: { dateCreated: "desc" },
         where,
         include: {
-          /* ...same includes as before */
+          assignees: {
+            include: { user: { select: USER_SELECT } },
+          },
+          assigneeUser: {
+            select: USER_SELECT_FULL,
+          },
+          createdByUser: {
+            select: USER_SELECT_WITH_ROLE,
+          },
+          team: { select: { id: true, name: true, logo: true } },
         },
       }),
       prisma.bounty.count({ where }),
@@ -613,6 +623,7 @@ router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
         createdByUser: {
           select: USER_SELECT_WITH_ROLE,
         },
+        team: { select: { id: true, name: true, logo: true } },
       },
     });
 
@@ -970,6 +981,7 @@ router.patch(
               assigneeUser: {
                 select: USER_SELECT_WITH_ROLE,
               },
+              team: { select: { id: true, name: true, logo: true } },
             },
           });
 

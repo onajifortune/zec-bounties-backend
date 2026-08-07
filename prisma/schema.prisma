@@ -177,6 +177,7 @@ model Team {
   name        String       @unique
   description String?
   logo        String?
+  isPrivate   Boolean      @default(false)   
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   members     TeamMember[]

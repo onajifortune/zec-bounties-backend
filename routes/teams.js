@@ -523,6 +523,42 @@ router.get("/:teamId/community/members", authenticate, async (req, res) => {
   }
 });
 
+router.get("/:teamId/community", authenticate, async (req, res) => {
+  try {
+    const { teamId } = req.params;
+
+    const member =
+      req.user.role === "ADMIN"
+        ? true
+        : await getTeamMember(teamId, req.user.id);
+
+    if (!member) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const favorites = await prisma.teamFavorite.findMany({
+      where: { teamId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            nickname: true,
+            email: true,
+            avatar: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.json({ success: true, community: favorites });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch team community" });
+  }
+});
+
 // ─── Single Team ─────────────────────────────────────────────────────────────
 
 router.get("/:teamId", authenticate, async (req, res) => {
@@ -579,50 +615,58 @@ router.get("/:teamId", authenticate, async (req, res) => {
 router.patch("/:teamId", authenticate, async (req, res) => {
   try {
     const { teamId } = req.params;
-
     if (!(await requireTeamAdmin(teamId, req, res))) return;
 
-    const { name, description } = req.body;
+    const { name, description, isPrivate } = req.body;
     const data = {};
 
-    if (name !== undefined) {
-      data.name = name.trim();
-    }
-
-    if (description !== undefined) {
+    if (name !== undefined) data.name = name.trim();
+    if (description !== undefined)
       data.description = description?.trim() || null;
-    }
+    if (isPrivate !== undefined) data.isPrivate = !!isPrivate;
 
     const team = await prisma.team.update({
-      where: {
-        id: teamId,
-      },
+      where: { id: teamId },
       data,
-      include: {
-        members: true,
-        wallet: true,
-      },
+      include: { members: true, wallet: true },
     });
 
-    if (name !== undefined) {
+    // Cascade the flip onto every existing bounty owned by this team,
+    // and notify connected clients which bounties changed
+    if (isPrivate !== undefined) {
+      const affected = await prisma.bounty.findMany({
+        where: { teamId },
+        select: { id: true },
+      });
+
+      await prisma.bounty.updateMany({
+        where: { teamId },
+        data: { isPrivate: !!isPrivate },
+      });
+
+      sendRealtimeUpdate(
+        "team_bounties_privacy_changed",
+        {
+          teamId,
+          isPrivate: !!isPrivate,
+          bountyIds: affected.map((b) => b.id),
+        },
+        req.user.id,
+      );
+    }
+
+    if (name !== undefined || isPrivate !== undefined) {
       await invalidateTeamBounties(teamId);
     }
 
     sendRealtimeUpdate("team_updated", team, req.user.id);
-
     res.json(team);
   } catch (err) {
     if (err.code === "P2002") {
-      return res.status(409).json({
-        error: "Team name already taken",
-      });
+      return res.status(409).json({ error: "Team name already taken" });
     }
-
     console.error(err);
-
-    res.status(500).json({
-      error: "Failed to update team",
-    });
+    res.status(500).json({ error: "Failed to update team" });
   }
 });
 
