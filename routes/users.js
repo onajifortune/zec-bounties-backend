@@ -132,12 +132,14 @@ async function loadStats(userId) {
  */
 router.get("/:idOrNickname/public", async (req, res) => {
   try {
-    const key = req.params.idOrNickname;
+    const key = decodeURIComponent(
+      String(req.params.idOrNickname || ""),
+    ).trim();
     if (!key) return res.status(400).json({ error: "User id required" });
 
     const user = await prisma.user.findFirst({
       where: {
-        OR: [{ id: key }, { nickname: key }],
+        OR: [{ id: key }, { nickname: key }, { name: key }],
       },
       select: {
         id: true,
@@ -224,7 +226,17 @@ router.get("/:idOrNickname/public", async (req, res) => {
     }
 
     if (show("showGithub") && user.githubId) {
-      profile.githubId = user.githubId;
+      // Prefer nickname (set from githubUser.login at signup).
+      // Fall back to name only if it looks like a handle.
+      const handle =
+        user.nickname ||
+        (user.name && /^[a-zA-Z0-9-]+$/.test(user.name) ? user.name : null);
+
+      if (handle) {
+        profile.githubUsername = handle;
+      }
+      // Optional: keep id for admin tools only, not required on public page
+      // profile.githubId = user.githubId;
     }
 
     if (show("showCompleted")) {
@@ -248,8 +260,21 @@ router.get("/:idOrNickname/public", async (req, res) => {
       profile.addressType = coarseAddressType(user);
       profile.hasUnifiedAddress = hasUA(user.UA_address);
       profile.hasShieldedAddress = !!user.z_address;
-    }
 
+      // Only for client-side icon decode — never render this string in the UI
+      if (user.UA_address) {
+        profile.UA_address = user.UA_address;
+      } else if (user.z_address) {
+        profile.z_address = user.z_address;
+      }
+
+      // Start empty; frontend fills from WASM (or falls back below)
+      profile.receivers = {
+        ironwood: false,
+        sapling: false,
+        transparent: false,
+      };
+    }
     if (show("showRecentBounties")) {
       profile.recentCompleted = stats.recentCompleted;
       profile.recentCreated = stats.recentCreated;
