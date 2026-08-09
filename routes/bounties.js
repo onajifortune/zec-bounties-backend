@@ -2,7 +2,11 @@ const express = require("express");
 const prisma = require("../prisma/client");
 const { formatEmailText } = require("../helpers/email");
 const router = express.Router();
-const { authenticate, isAdmin } = require("../middleware/auth");
+const {
+  authenticate,
+  isAdmin,
+  optionalAuthenticate,
+} = require("../middleware/auth");
 const { sendRealtimeUpdate } = require("../middleware/websocket");
 const {
   getCache,
@@ -32,6 +36,8 @@ const sendMailIfEnabled = async (options) => {
 
 // ─── Reusable select shapes (avoids re-typing & keeps payloads small) ─────────
 const USER_SELECT = { id: true, name: true, nickname: true, avatar: true };
+
+const USER_SELECT_PUBLIC = USER_SELECT;
 
 const USER_SELECT_FULL = {
   id: true,
@@ -90,7 +96,8 @@ const ASSIGNEE_INCLUDE = {
 // helper — call after any write that touches a specific bounty
 const invalidateBounty = async (bountyId) => {
   await Promise.all([
-    delCache(`bounty:${bountyId}`),
+    delCache(`bounty:public:${bountyId}`),
+    delCache(`bounty:full:${bountyId}`),
     delCache(`assignees:${bountyId}`),
     delCache("stats:totals"),
     deleteCacheByPattern("bounties:*"),
@@ -221,23 +228,27 @@ router.post("/", authenticate, async (req, res) => {
 });
 
 // ─── List bounties (paginated, lean payload) ──────────────────────────────────
-
-router.get("/", async (req, res) => {
+router.get("/", optionalAuthenticate, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+    const isAuthed = Boolean(req.user);
 
-    const cacheKey = `bounties:${JSON.stringify({ page, limit })}`;
+    // Namespace the cache by visibility level — critical: without this,
+    // a request that populates the cache while authed would leak
+    // emails/addresses to the next anonymous request that hits the same key.
+    const cacheKey = `bounties:${isAuthed ? "full" : "public"}:${JSON.stringify({ page, limit })}`;
 
-    // 1. CHECK CACHE FIRST
     const cached = await getCache(cacheKey);
-    if (cached) {
-      console.log("Cache Hit");
-      return res.json(cached);
-    }
-    console.log("Cache Miss");
+    if (cached) return res.json(cached);
 
-    // 2. DB FALLBACK
+    // Select shape depends on auth state — no PII/wallet data for anonymous callers
+    const userSelect = isAuthed ? USER_SELECT : USER_SELECT_PUBLIC;
+    const createdByUserSelect = isAuthed
+      ? USER_SELECT_WITH_ROLE
+      : USER_SELECT_PUBLIC;
+    const assigneeUserSelect = isAuthed ? USER_SELECT_FULL : USER_SELECT_PUBLIC;
+
     const [bounties, total] = await Promise.all([
       prisma.bounty.findMany({
         skip: (page - 1) * limit,
@@ -245,13 +256,13 @@ router.get("/", async (req, res) => {
         orderBy: { dateCreated: "desc" },
         include: {
           assignees: {
-            include: { user: { select: USER_SELECT } },
+            include: { user: { select: userSelect } },
           },
           assigneeUser: {
-            select: USER_SELECT_FULL,
+            select: assigneeUserSelect,
           },
           createdByUser: {
-            select: USER_SELECT_WITH_ROLE,
+            select: createdByUserSelect,
           },
         },
       }),
@@ -259,10 +270,7 @@ router.get("/", async (req, res) => {
     ]);
 
     const result = { data: bounties, total, page, limit };
-
-    // 3. STORE IN CACHE
     await setCache(cacheKey, result, TTL.BOUNTY_LIST);
-
     res.json(result);
   } catch (error) {
     console.error(error);
@@ -1547,7 +1555,7 @@ router.get("/mine", authenticate, async (req, res) => {
   }
 });
 
-router.get("/stats/totals", async (req, res) => {
+router.get("/stats/totals", authenticate, isAdmin, async (req, res) => {
   try {
     const cacheKey = "stats:totals";
 
@@ -1592,30 +1600,26 @@ router.get("/stats/totals", async (req, res) => {
 
 // ─── Get single bounty ────────────────────────────────────────────────────────
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", optionalAuthenticate, async (req, res) => {
   try {
     const bountyId = req.params.id;
-    const cacheKey = `bounty:${bountyId}`;
+    const isAuthed = Boolean(req.user);
+    const cacheKey = `bounty:${isAuthed ? "full" : "public"}:${bountyId}`;
 
     const cached = await getCache(cacheKey);
     if (cached) return res.json(cached);
 
+    const userSelect = isAuthed ? USER_SELECT_FULL : USER_SELECT_PUBLIC;
+    const createdByUserSelect = isAuthed
+      ? USER_SELECT_WITH_ROLE
+      : USER_SELECT_PUBLIC;
+
     const bounty = await prisma.bounty.findUnique({
       where: { id: bountyId },
       include: {
-        assigneeUser: {
-          select: USER_SELECT_FULL,
-        },
-        assignees: {
-          include: {
-            user: {
-              select: USER_SELECT_FULL,
-            },
-          },
-        },
-        createdByUser: {
-          select: USER_SELECT_WITH_ROLE,
-        },
+        assigneeUser: { select: userSelect },
+        assignees: { include: { user: { select: userSelect } } },
+        createdByUser: { select: createdByUserSelect },
       },
     });
 
