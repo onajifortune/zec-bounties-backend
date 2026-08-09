@@ -1009,7 +1009,7 @@ router.patch("/submissions/:submissionId", authenticate, async (req, res) => {
 });
 
 // ─── Fetch all users ──────────────────────────────────────────────────────────
-router.get("/users", async (req, res) => {
+router.get("/users", authenticate, async (req, res) => {
   try {
     const cacheKey = "users:all";
     const cached = await getCache(cacheKey);
