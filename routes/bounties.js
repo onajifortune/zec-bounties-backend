@@ -158,11 +158,6 @@ router.post("/", authenticate, async (req, res) => {
 
     const resolvedAssignee = assignee === "none" ? null : assignee;
     const isClient = req.user.role === "CLIENT";
-    const resolvedChain = isClient
-      ? "MAIN"
-      : chain && ["MAIN", "TEST"].includes(chain)
-        ? chain
-        : "MAIN";
 
     const bounty = await prisma.bounty.create({
       data: {
@@ -174,11 +169,13 @@ router.post("/", authenticate, async (req, res) => {
         assignee: resolvedAssignee,
         isApproved,
         categoryId,
-        chain: resolvedChain,
+        ...(chain && { chain }), // NEW — falls back to schema default (TEST) if omitted
         ...(isClient &&
           resolvedAssignee && {
             assignees: {
-              create: { userId: resolvedAssignee },
+              create: {
+                userId: resolvedAssignee,
+              },
             },
           }),
       },
@@ -301,6 +298,7 @@ router.get("/", optionalAuthenticate, async (req, res) => {
 
     const [bounties, total] = await Promise.all([
       prisma.bounty.findMany({
+        where: chainFilter,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { dateCreated: "desc" },
@@ -316,7 +314,10 @@ router.get("/", optionalAuthenticate, async (req, res) => {
           },
         },
       }),
-      prisma.bounty.count(),
+
+      prisma.bounty.count({
+        where: chainFilter,
+      }),
     ]);
 
     const result = { data: bounties, total, page, limit };
