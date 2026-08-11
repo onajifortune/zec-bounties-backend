@@ -1572,8 +1572,6 @@ router.get("/mine", authenticate, async (req, res) => {
       },
     });
 
-    console.log(bounties);
-
     res.json({ data: bounties, total: bounties.length });
   } catch (error) {
     console.error("Error fetching my bounties:", error);
