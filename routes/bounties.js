@@ -195,8 +195,6 @@ router.post("/", authenticate, async (req, res) => {
     sendRealtimeUpdate("new_bounties", bounty, req.user.id);
     await deleteCacheByPattern("bounties:*");
 
-    console.log(bounty);
-
     // Respond immediately — don't block on mail
     res.status(201).json(bounty);
 
@@ -1573,6 +1571,8 @@ router.get("/mine", authenticate, async (req, res) => {
         },
       },
     });
+
+    console.log(bounties);
 
     res.json({ data: bounties, total: bounties.length });
   } catch (error) {
