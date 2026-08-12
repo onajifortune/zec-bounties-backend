@@ -46,10 +46,23 @@ function byRank(a, b) {
   );
 }
 
+/** Strip wallet addresses for non-admin clients. Rank/badges/counts stay. */
+function redactContributorsForClient(rows, isAdminUser) {
+  if (isAdminUser) return rows;
+  return rows.map((u) => {
+    const { UA_address, z_address, ...rest } = u;
+    return rest;
+  });
+}
+
 // GET /api/kpis/top-contributors
-router.get("/top-contributors", authenticate, isAdmin, async (req, res) => {
+// Any logged-in user can read ranks/badges/counts.
+// Admins also receive UA_address for address-type icons on /admin/kpis.
+router.get("/top-contributors", authenticate, async (req, res) => {
   try {
-    const showAll = req.query.all === "true";
+    const isAdminUser = req.user?.role === "ADMIN";
+    // Non-admins cannot request the full user dump
+    const showAll = req.query.all === "true" && isAdminUser;
     const timeRange = req.query.timeRange || "all";
     const completedAtFilter = getCompletedAtFilter(timeRange);
     const chainFilter = getChainFilter(req.query.chain);
@@ -74,10 +87,26 @@ router.get("/top-contributors", authenticate, isAdmin, async (req, res) => {
         const hasUA = !!u.UA_address;
         const hasZ = !!u.z_address;
 
+        // App allows UA or z-address, not both. Lone z-address => Sapling-only.
         let addressType = "None";
-        if (hasUA && hasZ) addressType = "UA + z";
-        else if (hasUA) addressType = "UA only";
-        else if (hasZ) addressType = "Sapling";
+        let receivers = {
+          transparent: false,
+          sapling: false,
+          ironwood: false,
+        };
+        if (hasUA && hasZ) {
+          // Should not happen; prefer UA for type, client may refine via WASM
+          addressType = "UA only";
+        } else if (hasUA) {
+          addressType = "UA only"; // refined on admin client via WASM
+        } else if (hasZ) {
+          addressType = "Sapling";
+          receivers = {
+            transparent: false,
+            sapling: true,
+            ironwood: false,
+          };
+        }
 
         const userBadges = Array.isArray(u.badges) ? [...u.badges] : [];
 
@@ -97,7 +126,9 @@ router.get("/top-contributors", authenticate, isAdmin, async (req, res) => {
           nickname: u.nickname || null,
           avatar: u.avatar || null,
           UA_address: u.UA_address || null,
+          z_address: u.z_address || null,
           addressType,
+          receivers,
           badges: userBadges,
           completed: 0,
           cancelled: 0,
@@ -147,7 +178,7 @@ router.get("/top-contributors", authenticate, isAdmin, async (req, res) => {
       });
 
       const sorted = Array.from(userMap.values()).sort(byRank);
-      return res.json(sorted);
+      return res.json(redactContributorsForClient(sorted, isAdminUser));
     }
 
     const bounties = await prisma.bounty.findMany({
@@ -187,9 +218,23 @@ router.get("/top-contributors", authenticate, isAdmin, async (req, res) => {
         const hasZ = !!bounty.assigneeUser.z_address;
 
         let addressType = "None";
-        if (hasUA && hasZ) addressType = "UA + z";
-        else if (hasUA) addressType = "UA only";
-        else if (hasZ) addressType = "Sapling";
+        let receivers = {
+          transparent: false,
+          sapling: false,
+          ironwood: false,
+        };
+        if (hasUA && hasZ) {
+          addressType = "UA only";
+        } else if (hasUA) {
+          addressType = "UA only";
+        } else if (hasZ) {
+          addressType = "Sapling";
+          receivers = {
+            transparent: false,
+            sapling: true,
+            ironwood: false,
+          };
+        }
 
         const userBadges = Array.isArray(bounty.assigneeUser.badges)
           ? [...bounty.assigneeUser.badges]
@@ -211,7 +256,9 @@ router.get("/top-contributors", authenticate, isAdmin, async (req, res) => {
           nickname: bounty.assigneeUser.nickname || null,
           avatar: bounty.assigneeUser.avatar || null,
           UA_address: bounty.assigneeUser.UA_address || null,
+          z_address: bounty.assigneeUser.z_address || null,
           addressType,
+          receivers,
           badges: userBadges,
           completed: 0,
           submitted: 0,
@@ -245,14 +292,14 @@ router.get("/top-contributors", authenticate, isAdmin, async (req, res) => {
 
     const sorted = Array.from(userStats.values()).sort(byRank).slice(0, 25);
 
-    res.json(sorted);
+    res.json(redactContributorsForClient(sorted, isAdminUser));
   } catch (error) {
     console.error("Error in /top-contributors:", error);
     res.status(500).json({ error: "Failed to fetch data" });
   }
 });
 
-// GET /api/kpis/contributors-over-time
+// GET /api/kpis/contributors-over-time (aggregate only — safe for any logged-in user)
 router.get(
   "/contributors-over-time",
   authenticate,
@@ -315,7 +362,7 @@ router.get(
   },
 );
 
-// GET /api/kpis/average-earnings-over-time
+// GET /api/kpis/average-earnings-over-time (aggregates only — any logged-in user)
 router.get(
   "/average-earnings-over-time",
   authenticate,
