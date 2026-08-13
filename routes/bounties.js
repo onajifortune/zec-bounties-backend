@@ -1586,20 +1586,27 @@ router.get("/stats/totals", authenticate, isAdmin, async (req, res) => {
     const cached = await getCache(cacheKey);
     if (cached) return res.json(cached);
 
-    const [totalAmountResult, countResult] = await Promise.all([
-      // Sum ALL bounty amounts — no pagination, one DB round-trip
-      prisma.bounty.aggregate({
-        where: { chain: "MAIN" },
-        _sum: { bountyAmount: true },
-        _count: { id: true },
-      }),
-      // Separate counts per status so the dashboard can show accurate numbers
-      prisma.bounty.groupBy({
-        by: ["status"],
-        where: { chain: "MAIN" },
-        _count: { id: true },
-      }),
-    ]);
+    const [totalAmountResult, countResult, unpaidDoneCount] = await Promise.all(
+      [
+        // Sum ALL bounty amounts — no pagination, one DB round-trip
+        prisma.bounty.aggregate({
+          where: { chain: "MAIN" },
+          _sum: { bountyAmount: true },
+          _count: { id: true },
+        }),
+        // Separate counts per status so the dashboard can show accurate numbers
+        prisma.bounty.groupBy({
+          by: ["status"],
+          where: { chain: "MAIN" },
+          _count: { id: true },
+        }),
+        // DONE but not yet paid — groupBy status alone can't capture this,
+        // since isPaid is orthogonal to status
+        prisma.bounty.count({
+          where: { chain: "MAIN", status: "DONE", isPaid: false },
+        }),
+      ],
+    );
 
     const statusCounts = countResult.reduce((acc, row) => {
       acc[row.status] = row._count.id;
@@ -1610,6 +1617,7 @@ router.get("/stats/totals", authenticate, isAdmin, async (req, res) => {
       totalBountyAmount: totalAmountResult._sum.bountyAmount ?? 0,
       totalBountyCount: totalAmountResult._count.id,
       statusCounts,
+      unpaidDoneCount,
     };
 
     // Cache for 60 s — short TTL so it reflects recent changes quickly
