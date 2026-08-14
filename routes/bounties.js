@@ -181,23 +181,19 @@ router.post("/", authenticate, async (req, res) => {
       categoryId,
       chain,
       teamId,
-      isPrivate,
     } = req.body;
 
     if (chain && !["MAIN", "TEST"].includes(chain)) {
       return res.status(400).json({ error: "Invalid chain value" });
     }
 
-    if (isPrivate && !teamId) {
-      return res
-        .status(400)
-        .json({ error: "Private bounties must belong to a team" });
-    }
-
     // If a teamId was given, confirm it exists and the creator is actually
-    // a member (global admins can post on behalf of any team)
+    // a member (global admins can post on behalf of any team). `team` is
+    // declared here (not with `const` inside the `if`) so it's still in
+    // scope below when we denormalize its privacy flag onto the bounty.
+    let team = null;
     if (teamId) {
-      const team = await prisma.team.findUnique({ where: { id: teamId } });
+      team = await prisma.team.findUnique({ where: { id: teamId } });
       if (!team) return res.status(404).json({ error: "Team not found" });
 
       if (req.user.role !== "ADMIN") {
@@ -227,6 +223,8 @@ router.post("/", authenticate, async (req, res) => {
         categoryId,
         ...(chain && { chain }),
         ...(teamId && { teamId }),
+        // Denormalized from the team at creation time — a bounty's privacy
+        // always tracks its team's current privacy setting.
         isPrivate: team?.isPrivate ?? false,
         ...(isClient &&
           resolvedAssignee && {
@@ -305,24 +303,26 @@ router.post("/", authenticate, async (req, res) => {
 });
 
 // ─── List bounties (paginated, lean payload) ──────────────────────────────────
-
 router.get("/", optionalAuthenticate, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(parseInt(req.query.limit) || 10, 50);
     const isAuthed = Boolean(req.user);
+    const isViewerAdmin = req.user?.role === "ADMIN";
+    const userId = req.user?.id;
+    const teamId = req.query.teamId || undefined;
 
     // Default MAIN. Admins may pass ?chain=TEST or ?chain=ALL
     const chainParam = String(req.query.chain || "MAIN").toUpperCase();
     let chainFilter = { chain: "MAIN" };
 
     if (chainParam === "ALL") {
-      if (!req.user || req.user.role !== "ADMIN") {
+      if (!isViewerAdmin) {
         return res.status(403).json({ error: "ALL chains requires admin" });
       }
       chainFilter = {};
     } else if (chainParam === "TEST") {
-      if (!req.user || req.user.role !== "ADMIN") {
+      if (!isViewerAdmin) {
         return res.status(403).json({ error: "TEST chain requires admin" });
       }
       chainFilter = { chain: "TEST" };
@@ -330,41 +330,9 @@ router.get("/", optionalAuthenticate, async (req, res) => {
       return res.status(400).json({ error: "Invalid chain value" });
     }
 
-    // Namespace cache by auth level + chain — avoids PII leak and stale chain mixes
-    const cacheKey = `bounties:${isAuthed ? "full" : "public"}:${JSON.stringify(
-      {
-        page,
-        limit,
-        chain:
-          chainParam === "ALL"
-            ? "ALL"
-            : chainParam === "TEST"
-              ? "TEST"
-              : "MAIN",
-      },
-    )}`;
-
-    const cached = await getCache(cacheKey);
-    if (cached) return res.json(cached);
-
-    // Select shape depends on auth state — no PII/wallet data for anonymous callers
-    const userSelect = isAuthed ? USER_SELECT : USER_SELECT_PUBLIC;
-    const createdByUserSelect = isAuthed
-      ? USER_SELECT_WITH_ROLE
-      : USER_SELECT_PUBLIC;
-    const assigneeUserSelect = isAuthed ? USER_SELECT_FULL : USER_SELECT_PUBLIC;
-
-    const teamId = req.query.teamId || undefined;
-    const isAdmin = req.user?.role === "ADMIN";
-    const userId = req.user?.id;
-
-    // Cache key must vary by viewer since private bounties are viewer-dependent
-    const cacheKey = `bounties:${JSON.stringify({ page, limit, teamId, viewer: isAdmin ? "admin" : (userId ?? "anon") })}`;
-
-    const cached = await getCache(cacheKey);
-    if (cached) return res.json(cached);
-
-    const visibilityFilter = isAdmin
+    // Private bounties are only visible to their creator, team members,
+    // team favoriters (community members), or admins.
+    const visibilityFilter = isViewerAdmin
       ? {}
       : {
           OR: [
@@ -382,15 +350,38 @@ router.get("/", optionalAuthenticate, async (req, res) => {
           ],
         };
 
-    const where = { ...(teamId && { teamId }), ...visibilityFilter };
+    const where = {
+      ...chainFilter,
+      ...(teamId && { teamId }),
+      ...visibilityFilter,
+    };
+
+    // Namespace cache by chain + team + viewer — avoids PII leaks, stale
+    // chain mixes, and serving private bounties to the wrong viewer.
+    const cacheKey = `bounties:${JSON.stringify({
+      page,
+      limit,
+      teamId: teamId ?? null,
+      chain: chainParam,
+      viewer: isViewerAdmin ? "admin" : (userId ?? "anon"),
+    })}`;
+
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json(cached);
+
+    // Select shape depends on auth state — no PII/wallet data for anonymous callers
+    const userSelect = isAuthed ? USER_SELECT : USER_SELECT_PUBLIC;
+    const createdByUserSelect = isAuthed
+      ? USER_SELECT_WITH_ROLE
+      : USER_SELECT_PUBLIC;
+    const assigneeUserSelect = isAuthed ? USER_SELECT_FULL : USER_SELECT_PUBLIC;
 
     const [bounties, total] = await Promise.all([
       prisma.bounty.findMany({
-        where: chainFilter,
+        where,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { dateCreated: "desc" },
-        where,
         include: {
           assignees: {
             include: { user: { select: userSelect } },
@@ -403,10 +394,6 @@ router.get("/", optionalAuthenticate, async (req, res) => {
           },
           team: { select: { id: true, name: true, logo: true } },
         },
-      }),
-
-      prisma.bounty.count({
-        where: chainFilter,
       }),
       prisma.bounty.count({ where }),
     ]);
@@ -1043,12 +1030,6 @@ router.patch(
             include: {
               createdByUser: { select: USER_SELECT_WITH_ROLE },
               assigneeUser: { select: USER_SELECT_WITH_ROLE },
-              createdByUser: {
-                select: USER_SELECT_WITH_ROLE,
-              },
-              assigneeUser: {
-                select: USER_SELECT_WITH_ROLE,
-              },
               team: { select: { id: true, name: true, logo: true } },
             },
           });
@@ -1464,24 +1445,13 @@ router.put("/applications/:applicationId", authenticate, async (req, res) => {
       }
       return updated;
     });
+
     await invalidateApplications(application.applicantId, application.bountyId);
     await invalidateBounty(application.bountyId);
 
     sendRealtimeUpdate("application_updated", result, req.user.id);
     res.json(result);
 
-      sendRealtimeUpdate("application_updated", result, req.user.id);
-      res.json(result);
-
-      // Fire-and-forget — applicant just got assigned via acceptance
-      if (status === "accepted" && result.applicantUser?.email) {
-        const recipient = result.applicantUser;
-        const bountyTitle = application.bounty?.title ?? "a bounty";
-        sendMailIfEnabled({
-          to: recipient.email,
-          subject: `You've been assigned: ${bountyTitle}`,
-          text: `Hi ${recipient.nickname || recipient.name},\n\nYour application was accepted and you've been assigned to "${bountyTitle}". You can start working on it now.`,
-          html: `
     // Fire-and-forget — applicant just got assigned via acceptance
     if (status === "accepted" && result.applicantUser?.email) {
       const recipient = result.applicantUser;
@@ -1699,8 +1669,8 @@ router.get("/mine", authenticate, async (req, res) => {
   }
 });
 
+// ─── Stats totals (Admin) ──────────────────────────────────────────────────────
 router.get("/stats/totals", authenticate, isAdmin, async (req, res) => {
-router.get("/stats/totals", async (req, res) => {
   try {
     const cacheKey = "stats:totals";
 
@@ -1752,7 +1722,6 @@ router.get("/stats/totals", async (req, res) => {
 });
 
 // ─── Get single bounty ────────────────────────────────────────────────────────
-
 router.get("/:id", optionalAuthenticate, async (req, res) => {
   try {
     const bountyId = req.params.id;
@@ -1762,6 +1731,7 @@ router.get("/:id", optionalAuthenticate, async (req, res) => {
     const cached = await getCache(cacheKey);
     if (cached) return res.json(cached);
 
+    // No PII/wallet data for anonymous callers
     const userSelect = isAuthed ? USER_SELECT_FULL : USER_SELECT_PUBLIC;
     const createdByUserSelect = isAuthed
       ? USER_SELECT_WITH_ROLE
@@ -1773,19 +1743,6 @@ router.get("/:id", optionalAuthenticate, async (req, res) => {
         assigneeUser: { select: userSelect },
         assignees: { include: { user: { select: userSelect } } },
         createdByUser: { select: createdByUserSelect },
-        assigneeUser: {
-          select: USER_SELECT_FULL,
-        },
-        assignees: {
-          include: {
-            user: {
-              select: USER_SELECT_FULL,
-            },
-          },
-        },
-        createdByUser: {
-          select: USER_SELECT_WITH_ROLE,
-        },
         team: { select: { id: true, name: true, logo: true } },
       },
     });
@@ -1794,7 +1751,6 @@ router.get("/:id", optionalAuthenticate, async (req, res) => {
     if (!(await canViewPrivateBounty(bounty, req.user))) {
       return res.status(404).json({ error: "Bounty not found" });
     }
-    res.json(bounty);
 
     await setCache(cacheKey, bounty, TTL.BOUNTY_SINGLE);
     res.json(bounty);
