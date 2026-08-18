@@ -1,50 +1,39 @@
-const { execSync } = require("child_process");
-const { existsSync } = require("fs");
+const ZingoProcess = require("./getZingo"); // adjust path if ZingoProcess lives elsewhere
 
+/**
+ * executeZingoCliSeed
+ * Imports a wallet from a seed phrase by driving a running zingo-cli
+ * process over stdin (via ZingoProcess.seed), instead of building a shell
+ * string and passing it to execSync. This removes the shell-injection
+ * surface entirely: args to spawn() are passed as an array (no /bin/sh
+ * involved), and the seed itself never appears as a CLI argument or in
+ * a concatenated shell command, so it can't be observed via `ps`/`/proc`
+ * and can't be used to break out into arbitrary command execution.
+ *
+ * @param {object} params - { chain, serverUrl, dataDir }
+ * @param {string} seed - 24-word seed phrase
+ * @param {number} birthday - wallet birthday height
+ */
 async function executeZingoCliSeed(params, seed, birthday) {
-  const zingoPath = process.env.ZINGO_CLI;
-
-  if (!existsSync(zingoPath)) {
-    throw new Error(`zingo-cli not found at ${zingoPath}`);
+  // Reject embedded control characters (newlines/carriage returns) so a
+  // crafted "word" can't inject a second command into the zingo-cli
+  // stdin stream — this is a separate, narrower injection surface than
+  // the OS shell, against zingo-cli's own line-based command parser.
+  if (/[\r\n]/.test(seed)) {
+    throw new Error("Seed phrase contains invalid characters");
   }
 
-  const args = [
-    `--chain ${params.chain || "mainnet"}`,
-    `--server ${params.serverUrl || "http://127.0.0.1:8137"}`,
-    `--data-dir "${params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino"}"`,
-    `--seed "${seed}"`,
-    `--birthday ${birthday || 0}`,
-  ].join(" ");
+  const safeBirthday = Number(birthday) || 0;
+
+  const zingo = new ZingoProcess(params);
 
   try {
-    // 1️⃣ Run CLI and capture full output
-    const rawOutput = execSync(`${zingoPath} ${args}`, {
-      stdio: "pipe",
-    }).toString();
-
-    // 2️⃣ Strip ANSI color codes
-    const noAnsi = rawOutput.replace(/\u001b\[[0-9;]*m/g, "");
-
-    // 3️⃣ Extract JSON blocks (any {…} including newlines)
-    const jsonBlocks = noAnsi.match(/\{[\s\S]*?\}/g) || [];
-
-    // 4️⃣ Parse each JSON block safely
-    const parsed = jsonBlocks
-      .map((block) => {
-        try {
-          return JSON.parse(block);
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean);
-    // 5️⃣ Return array if >1 objects, or object if just 1
-    if (parsed.length === 1) return parsed[0];
-    return parsed;
+    const result = await zingo.seed(seed, safeBirthday);
+    return result;
   } catch (error) {
-    throw new Error(
-      `Zingo CLI error: ${error.stderr?.toString() || error.message}`,
-    );
+    throw new Error(`Zingo CLI error: ${error.message}`);
+  } finally {
+    zingo.destroy();
   }
 }
 
