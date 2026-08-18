@@ -1,12 +1,3 @@
-// Store all connected clients, keyed by userId.
-// Using a Map instead of a Set fixes two things:
-//   1. getClientByUserId was previously an O(n) linear scan over every
-//      connection; this is now an O(1) lookup.
-//   2. It enforces a single live connection per user. If a user (or an
-//      attacker who has somehow obtained a valid token for that user)
-//      opens a second connection, the old socket is closed rather than
-//      silently coexisting, so sendToUser can never race between two
-//      sockets claiming the same identity.
 const clients = new Map(); // userId -> { ws, userId, userName }
 
 // Broadcast to all connected clients
@@ -34,11 +25,6 @@ function sendToUser(userId, type, payload) {
   }
 }
 
-// `user` is the already-authenticated Prisma user record, verified from a
-// JWT in server.js's verifyClient BEFORE this connection was ever accepted.
-// This function no longer trusts anything the client claims about its own
-// identity — there is intentionally no "join" message that takes a
-// client-supplied userId.
 function handleWebSocket(ws, prisma, user) {
   // If this user already has a live connection, close the old one so a
   // stale/duplicate/hijacked socket can't keep receiving sendToUser events.
