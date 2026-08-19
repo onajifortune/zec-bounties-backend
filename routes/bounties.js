@@ -1047,6 +1047,11 @@ router.patch(
 );
 
 // ─── Edit submission (submitter only, within 15 min of submission) ────────────
+// ─── Edit submission (submitter only) ─────────────────────────────────────
+// "pending" submissions: 15-min self-correction window from original submit.
+// "needs_revision" submissions: editable any time (admin explicitly reopened
+// it) — saving resubmits it as "pending" and restarts the 15-min window from
+// that save, so it now behaves like a normal fresh submission again.
 router.patch("/submissions/:submissionId", authenticate, async (req, res) => {
   try {
     const { submissionId } = req.params;
@@ -1076,36 +1081,64 @@ router.patch("/submissions/:submissionId", authenticate, async (req, res) => {
         .json({ error: "You can only edit your own submission" });
     }
 
-    const EDIT_WINDOW_MS = 15 * 60 * 1000;
-    const elapsed = Date.now() - new Date(submission.submittedAt).getTime();
-    if (elapsed > EDIT_WINDOW_MS) {
-      return res.status(400).json({ error: "Edit window has expired" });
-    }
-
-    // Optional: only allow editing while still pending review
-    if (submission.status !== "pending") {
+    if (submission.status === "pending") {
+      const EDIT_WINDOW_MS = 15 * 60 * 1000;
+      const elapsed = Date.now() - new Date(submission.submittedAt).getTime();
+      if (elapsed > EDIT_WINDOW_MS) {
+        return res.status(400).json({ error: "Edit window has expired" });
+      }
+    } else if (submission.status !== "needs_revision") {
       return res
         .status(400)
         .json({ error: "Submission has already been reviewed" });
     }
 
-    const updated = await prisma.workSubmission.update({
-      where: { id: submissionId },
-      data: {
-        description: description.trim(),
-        deliverableUrl: deliverableUrl?.trim() || null,
-      },
-      include: {
-        submitterUser: { select: USER_SELECT_BASIC },
-      },
+    const wasRevision = submission.status === "needs_revision";
+
+    const [updated, updatedBounty] = await prisma.$transaction(async (tx) => {
+      const updSub = await tx.workSubmission.update({
+        where: { id: submissionId },
+        data: {
+          description: description.trim(),
+          deliverableUrl: deliverableUrl?.trim() || null,
+          ...(wasRevision && {
+            status: "pending",
+            submittedAt: new Date(),
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewNotes: null,
+          }),
+        },
+        include: {
+          submitterUser: { select: USER_SELECT_BASIC },
+        },
+      });
+
+      let updBounty = null;
+      if (wasRevision) {
+        updBounty = await tx.bounty.update({
+          where: { id: submission.bountyId },
+          data: { status: "IN_REVIEW" },
+          include: {
+            createdByUser: { select: USER_SELECT_WITH_ROLE },
+            assigneeUser: { select: USER_SELECT_WITH_ROLE },
+          },
+        });
+      }
+
+      return [updSub, updBounty];
     });
 
     sendRealtimeUpdate("submission_edited", updated, userId);
+    if (updatedBounty)
+      sendRealtimeUpdate("bounty_updated", updatedBounty, userId);
     await invalidateSubmissions(submission.bountyId, userId);
+    if (wasRevision) await invalidateBounty(submission.bountyId);
 
     res.json({
       message: "Submission updated successfully",
       workSubmission: updated,
+      ...(updatedBounty && { bounty: updatedBounty }),
     });
   } catch (error) {
     console.error("Error editing submission:", error);
