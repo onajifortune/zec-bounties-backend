@@ -43,6 +43,8 @@ model User {
   ofacVerified         Boolean             @default(false)
   teamMembers          TeamMember[]        @relation("UserTeams")
   badges               Json                @default("[]")
+  pushNotifications    Boolean @default(true)
+  pushSubscriptions    PushSubscription[]
   favoriteTeams        TeamFavorite[]      @relation("UserFavoriteTeams")
   communities          CommunityMember[] @relation("UserCommunities")
 
@@ -237,6 +239,15 @@ model TeamWallet {
   @@map("team_wallets")
 }
 
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 model CommunityMember {
   id       String   @id @default(cuid())
   teamId   String
