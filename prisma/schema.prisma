@@ -248,6 +248,8 @@ model PushSubscription {
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  }
+  
 model CommunityMember {
   id       String   @id @default(cuid())
   teamId   String
