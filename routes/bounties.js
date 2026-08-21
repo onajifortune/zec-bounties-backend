@@ -2148,18 +2148,21 @@ router.get("/stats/totals", authenticate, isAdmin, async (req, res) => {
 });
 
 // ─── Get single bounty ────────────────────────────────────────────────────
-// ─── Get single bounty ────────────────────────────────────────────────────────
 router.get("/:id", optionalAuthenticate, async (req, res) => {
   try {
     const bountyId = req.params.id;
     const isAuthed = Boolean(req.user);
+    const userId = req.user?.id ?? "anon";
+    const isAdmin = req.user?.role === "ADMIN";
     const version = await getVersion("bounties");
-    const cacheKey = `bounty:v${version}:${isAuthed ? "full" : "public"}:${bountyId}`;
+
+    // Scoped per-viewer, not just per-auth-state — matches the GET / pattern
+    // and prevents one user's cached view of a private bounty leaking to another.
+    const cacheKey = `bounty:v${version}:${isAdmin ? "admin" : userId}:${bountyId}`;
 
     const cached = await getCache(cacheKey);
     if (cached) return res.json(cached);
 
-    // No PII/wallet data for anonymous callers
     const userSelect = isAuthed ? USER_SELECT_FULL : USER_SELECT_PUBLIC;
     const createdByUserSelect = isAuthed
       ? USER_SELECT_WITH_ROLE
@@ -2223,6 +2226,22 @@ router.put("/:id", authenticate, async (req, res) => {
     }
 
     const { notifyUsers = false } = req.body;
+    let resolvedIsPrivate;
+    if (req.body.teamId !== undefined) {
+      if (req.body.teamId) {
+        const newTeam = await prisma.team.findUnique({
+          where: { id: req.body.teamId },
+          select: { isPrivate: true },
+        });
+        if (!newTeam) {
+          return res.status(404).json({ error: "Team not found" });
+        }
+        resolvedIsPrivate = newTeam.isPrivate;
+      } else {
+        // Unassigning from a team — no team means it can't be private
+        resolvedIsPrivate = false;
+      }
+    }
 
     // including the status flip hidden inside isApproved
     const before = await prisma.bounty.findUnique({
@@ -2261,6 +2280,10 @@ router.put("/:id", authenticate, async (req, res) => {
         ...(req.body.isApproved !== undefined && {
           isApproved: req.body.isApproved,
           status: nextStatus,
+        }),
+        ...(req.body.teamId !== undefined && {
+          teamId: req.body.teamId || null,
+          isPrivate: resolvedIsPrivate,
         }),
       },
       include: {

@@ -10,10 +10,15 @@ const executeZingoCliSeed = require("../utils/zingo/zingoLibSeed");
 const executeZingoCliBalance = require("../utils/zingo/zingoLibBalance");
 const executeZingoCliAddresses = require("../utils/zingo/zingoLibAddresses");
 const executeZingoQuickSend = require("../utils/zingo/zingoLibQuickSend");
-const { delCache, deleteCacheByPattern } = require("../utils/cache");
+const {
+  delCache,
+  deleteCacheByPattern,
+  bumpVersion,
+} = require("../utils/cache");
 const { getWalletDataDir } = require("../helpers/zcash/zcashHelper.js");
 const executeZingoCliTransactions = require("../utils/zingo/zingoLibTransactions");
 const executeZingoCliRescan = require("../utils/zingo/zingoLibRescan");
+const { uploadToPinata, pinataUrl } = require("../utils/ipfs/pinata");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -157,20 +162,8 @@ async function removeWalletFromMembers(teamId, wallet, userIds) {
 
 const multer = require("multer");
 
-const LOGO_DIR = path.join(process.cwd(), "uploads", "team-logos");
-
-fs.mkdir(LOGO_DIR, { recursive: true }).catch(() => {});
-
-const logoStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, LOGO_DIR),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || ".png";
-    cb(null, `${req.params.teamId}-${Date.now()}${ext}`);
-  },
-});
-
-const uploadLogo = multer({
-  storage: logoStorage,
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024,
   },
@@ -200,8 +193,27 @@ async function invalidateTeamBounties(teamId) {
 
   await Promise.all([
     deleteCacheByPattern("bounties:*"),
-    ...bounties.map((b) => delCache(`bounty:${b.id}`)),
+    bumpVersion("bounties"),
   ]);
+}
+
+// ─── Media URL helper ─────────────────────────────────────────────────────
+// Team.logo / Team.banner are stored as bare Pinata CIDs. Every response
+// that includes a team must convert them to full gateway URLs here — this
+// is the one place that knows about IPFS, so the frontend never has to.
+function toMediaUrl(cid) {
+  if (!cid) return null;
+  if (/^https?:\/\//i.test(cid)) return cid; // already a full URL, don't double-wrap
+  return pinataUrl(cid);
+}
+
+function serializeTeam(team) {
+  if (!team) return team;
+  return {
+    ...team,
+    logo: toMediaUrl(team.logo),
+    banner: toMediaUrl(team.banner),
+  };
 }
 
 // ─── Team CRUD ───────────────────────────────────────────────────────────────
@@ -244,9 +256,8 @@ router.post("/", authenticate, async (req, res) => {
       },
     });
 
-    sendRealtimeUpdate("team_created", team, req.user.id);
-
-    res.status(201).json(team);
+    sendRealtimeUpdate("team_created", serializeTeam(team), req.user.id);
+    res.status(201).json(serializeTeam(team));
   } catch (err) {
     if (err.code === "P2002") {
       return res.status(409).json({
@@ -299,7 +310,7 @@ router.get("/", authenticate, async (req, res) => {
       },
     });
 
-    res.json(teams);
+    res.json(teams.map(serializeTeam));
   } catch (err) {
     console.error(err);
 
@@ -329,7 +340,7 @@ router.get("/public", async (req, res) => {
         id: t.id,
         name: t.name,
         description: t.description,
-        logo: t.logo,
+        logo: toMediaUrl(t.logo),
         memberCount: t._count.members,
         communityCount: t._count.favoritedBy,
       })),
@@ -602,7 +613,7 @@ router.get("/:teamId", authenticate, async (req, res) => {
       }
     }
 
-    res.json(team);
+    res.json(serializeTeam(team));
   } catch (err) {
     console.error(err);
 
@@ -659,8 +670,8 @@ router.patch("/:teamId", authenticate, async (req, res) => {
       await invalidateTeamBounties(teamId);
     }
 
-    sendRealtimeUpdate("team_updated", team, req.user.id);
-    res.json(team);
+    sendRealtimeUpdate("team_updated", serializeTeam(team), req.user.id);
+    res.json(serializeTeam(team));
   } catch (err) {
     if (err.code === "P2002") {
       return res.status(409).json({ error: "Team name already taken" });
@@ -1688,7 +1699,7 @@ router.get("/:teamId/submissions", authenticate, async (req, res) => {
 router.post(
   "/:teamId/logo",
   authenticate,
-  uploadLogo.single("logo"),
+  imageUpload.single("logo"),
   async (req, res) => {
     try {
       const { teamId } = req.params;
@@ -1708,27 +1719,25 @@ router.post(
       });
 
       if (!team) {
-        await fs.unlink(req.file.path).catch(() => {});
-
         return res.status(404).json({
           error: "Team not found",
         });
       }
 
-      if (team.logo?.startsWith("/uploads/team-logos/")) {
-        const oldPath = path.join(process.cwd(), team.logo);
+      const pinataResult = await uploadToPinata(req.file);
 
-        await fs.unlink(oldPath).catch(() => {});
+      const cid = pinataResult.cid;
+
+      if (!cid) {
+        throw new Error("Pinata did not return a CID");
       }
-
-      const logoUrl = `/uploads/team-logos/${req.file.filename}`;
 
       const updated = await prisma.team.update({
         where: {
           id: teamId,
         },
         data: {
-          logo: logoUrl,
+          logo: cid,
         },
         include: {
           members: true,
@@ -1738,15 +1747,14 @@ router.post(
 
       await invalidateTeamBounties(teamId);
 
-      sendRealtimeUpdate("team_updated", updated, req.user.id);
-
+      sendRealtimeUpdate("team_updated", serializeTeam(updated), req.user.id);
       res.json({
         success: true,
-        logo: logoUrl,
-        team: updated,
+        logo: toMediaUrl(cid),
+        team: serializeTeam(updated),
       });
     } catch (err) {
-      console.error(err);
+      console.error("Pinata team logo upload failed:", err);
 
       res.status(500).json({
         error: "Failed to upload team logo",
@@ -1794,18 +1802,98 @@ router.delete("/:teamId/logo", authenticate, async (req, res) => {
 
     await invalidateTeamBounties(teamId);
 
-    sendRealtimeUpdate("team_updated", updated, req.user.id);
-
-    res.json({
-      success: true,
-      team: updated,
-    });
+    sendRealtimeUpdate("team_updated", serializeTeam(updated), req.user.id);
+    res.json({ success: true, team: serializeTeam(updated) });
   } catch (err) {
     console.error(err);
 
     res.status(500).json({
       error: "Failed to remove team logo",
     });
+  }
+});
+
+router.post(
+  "/:teamId/banner",
+  authenticate,
+  imageUpload.single("banner"),
+  async (req, res) => {
+    try {
+      const { teamId } = req.params;
+
+      if (!(await requireTeamAdmin(teamId, req, res))) return;
+
+      if (!req.file) {
+        return res.status(400).json({
+          error: "No image file provided",
+        });
+      }
+
+      const team = await prisma.team.findUnique({
+        where: { id: teamId },
+      });
+
+      if (!team) {
+        return res.status(404).json({
+          error: "Team not found",
+        });
+      }
+
+      const pinataResult = await uploadToPinata(req.file);
+      const cid = pinataResult.cid;
+
+      if (!cid) {
+        throw new Error("Pinata did not return a CID");
+      }
+
+      const updated = await prisma.team.update({
+        where: { id: teamId },
+        data: { banner: cid },
+        include: {
+          members: true,
+          wallet: true,
+        },
+      });
+
+      await invalidateTeamBounties(teamId);
+
+      sendRealtimeUpdate("team_updated", serializeTeam(updated), req.user.id);
+      res.json({
+        success: true,
+        banner: toMediaUrl(cid),
+        team: serializeTeam(updated),
+      });
+    } catch (err) {
+      console.error("Pinata team banner upload failed:", err);
+
+      res.status(500).json({
+        error: "Failed to upload team banner",
+      });
+    }
+  },
+);
+
+router.delete("/:teamId/banner", authenticate, async (req, res) => {
+  try {
+    const { teamId } = req.params;
+    if (!(await requireTeamAdmin(teamId, req, res))) return;
+
+    const team = await prisma.team.findUnique({ where: { id: teamId } });
+    if (!team) return res.status(404).json({ error: "Team not found" });
+
+    const updated = await prisma.team.update({
+      where: { id: teamId },
+      data: { banner: null },
+      include: { members: true, wallet: true },
+    });
+
+    await invalidateTeamBounties(teamId);
+    sendRealtimeUpdate("team_updated", serializeTeam(updated), req.user.id);
+
+    res.json({ success: true, team: serializeTeam(updated) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to remove team banner" });
   }
 });
 

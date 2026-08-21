@@ -3,7 +3,6 @@ const cron = require("node-cron");
 const express = require("express");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
-const path = require("path");
 const { createServer } = require("http");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
@@ -23,9 +22,6 @@ const allowedOrigins = [
 
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
-
-// Serve uploaded assets (team logos, etc.) statically
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.get("/", (req, res) => {
   res.json({

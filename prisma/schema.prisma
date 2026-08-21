@@ -181,7 +181,8 @@ model Team {
   name        String       @unique
   description String?
   logo        String?
-  isPrivate   Boolean      @default(false)   
+  banner      String?
+  isPrivate   Boolean      @default(false)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   members     TeamMember[]
@@ -189,7 +190,6 @@ model Team {
   bounties    Bounty[]     @relation("TeamBounties")
   favoritedBy TeamFavorite[] @relation("TeamFavoritedBy")
   communityMembers CommunityMember[] @relation("TeamCommunity")
-
 
   @@map("teams")
 }
