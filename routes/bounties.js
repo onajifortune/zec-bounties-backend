@@ -1013,7 +1013,8 @@ router.patch(
                   completedAt: new Date(),
                 }),
               ...(status !== "approved" &&
-                submission.bounty.status === "DONE" && { completedAt: null }),
+                submission.bounty.status === "DONE" &&
+                newBountyStatus !== "DONE" && { completedAt: null }),
               ...(status === "rejected" &&
                 submission.bounty.assignee === submission.submittedBy && {
                   assignee: null,
