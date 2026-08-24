@@ -19,6 +19,7 @@ const {
 } = require("../utils/cache");
 const sendMail = require("../utils/sendMail");
 const notifyUser = require("../utils/notifyUser");
+const { REQUIRED_TEAM_VERIFICATIONS } = require("../utils/constants");
 
 // ─── Email settings ───────────────────────────────────────────────────────────
 const ENABLE_EMAILS_IN_DEV = false; // Set to true when you want to test emails
@@ -56,6 +57,39 @@ const sendPushToOptedIn = async (userIds, payload) => {
     console.error("Push notification failed:", err);
   }
 };
+
+// Mirrors canViewPrivateBounty's rules, but returns the full recipient set
+// instead of checking one user — used to scope websocket broadcasts so a
+// private bounty's payload never reaches a socket outside its audience.
+// Returns null for public bounties, meaning "broadcast to everyone" (unchanged behavior).
+async function getBroadcastRecipients(bounty) {
+  if (!bounty.isPrivate) return null;
+
+  const recipients = new Set([bounty.createdBy]);
+
+  const admins = await prisma.user.findMany({
+    where: { role: "ADMIN" },
+    select: { id: true },
+  });
+  admins.forEach((a) => recipients.add(a.id));
+
+  if (bounty.teamId) {
+    const [members, favoriters] = await Promise.all([
+      prisma.teamMember.findMany({
+        where: { teamId: bounty.teamId },
+        select: { userId: true },
+      }),
+      prisma.teamFavorite.findMany({
+        where: { teamId: bounty.teamId },
+        select: { userId: true },
+      }),
+    ]);
+    members.forEach((m) => recipients.add(m.userId));
+    favoriters.forEach((f) => recipients.add(f.userId));
+  }
+
+  return [...recipients];
+}
 
 // ─── Reusable select shapes (avoids re-typing & keeps payloads small) ─────────
 const USER_SELECT = { id: true, name: true, nickname: true, avatar: true };
@@ -217,6 +251,14 @@ router.post("/", authenticate, async (req, res) => {
       team = await prisma.team.findUnique({ where: { id: teamId } });
       if (!team) return res.status(404).json({ error: "Team not found" });
 
+      // Verification gate applies to everyone, including global admins —
+      // this isn't an authorization check, it's a platform integrity gate.
+      if (!team.isVerified) {
+        return res.status(403).json({
+          error: `${team.name} must be verified by ${REQUIRED_TEAM_VERIFICATIONS} admins before it can post bounties`,
+        });
+      }
+
       if (req.user.role !== "ADMIN") {
         const membership = await prisma.teamMember.findUnique({
           where: { teamId_userId: { teamId, userId: req.user.id } },
@@ -270,7 +312,8 @@ router.post("/", authenticate, async (req, res) => {
       },
     });
 
-    sendRealtimeUpdate("new_bounties", bounty, req.user.id);
+    const recipients = await getBroadcastRecipients(bounty);
+    sendRealtimeUpdate("new_bounties", bounty, req.user.id, recipients);
     await deleteCacheByPattern("bounties:*");
 
     // Respond immediately — don't block on notifications
@@ -2231,10 +2274,15 @@ router.put("/:id", authenticate, async (req, res) => {
       if (req.body.teamId) {
         const newTeam = await prisma.team.findUnique({
           where: { id: req.body.teamId },
-          select: { isPrivate: true },
+          select: { isPrivate: true, isVerified: true, name: true },
         });
         if (!newTeam) {
           return res.status(404).json({ error: "Team not found" });
+        }
+        if (!newTeam.isVerified) {
+          return res.status(403).json({
+            error: `${newTeam.name} must be verified by ${REQUIRED_TEAM_VERIFICATIONS} admins before bounties can be assigned to it`,
+          });
         }
         resolvedIsPrivate = newTeam.isPrivate;
       } else {

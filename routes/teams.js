@@ -18,7 +18,9 @@ const {
 const { getWalletDataDir } = require("../helpers/zcash/zcashHelper.js");
 const executeZingoCliTransactions = require("../utils/zingo/zingoLibTransactions");
 const executeZingoCliRescan = require("../utils/zingo/zingoLibRescan");
+const executeZingoCliSync = require("../utils/zingo/zingoLibSync");
 const { uploadToPinata, pinataUrl } = require("../utils/ipfs/pinata");
+const { REQUIRED_TEAM_VERIFICATIONS } = require("../utils/constants");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -176,6 +178,14 @@ const imageUpload = multer({
   },
 });
 
+function requireGlobalAdmin(req, res) {
+  if (req.user.role !== "ADMIN") {
+    res.status(403).json({ error: "Admin access required" });
+    return false;
+  }
+  return true;
+}
+
 /**
  * Bust every cache entry that could contain a stale copy of this team's
  * name/logo — the bounty list, each individual bounty belonging to the
@@ -220,7 +230,8 @@ function serializeTeam(team) {
 
 router.post("/", authenticate, async (req, res) => {
   try {
-    const { name, description } = req.body;
+    const { name, description, twitterUrl, discordUrl, additionalLinks } =
+      req.body;
 
     if (!name?.trim()) {
       return res.status(400).json({
@@ -228,10 +239,26 @@ router.post("/", authenticate, async (req, res) => {
       });
     }
 
+    if (!twitterUrl?.trim() || !discordUrl?.trim()) {
+      return res.status(400).json({
+        error: "Twitter and Discord links are required",
+      });
+    }
+
+    const cleanedLinks = Array.isArray(additionalLinks)
+      ? additionalLinks
+          .map((l) => (typeof l === "string" ? l.trim() : ""))
+          .filter(Boolean)
+          .slice(0, 10) // sane cap
+      : [];
+
     const team = await prisma.team.create({
       data: {
         name: name.trim(),
         description: description?.trim() || null,
+        twitterUrl: twitterUrl.trim(),
+        discordUrl: discordUrl.trim(),
+        additionalLinks: cleanedLinks,
         members: {
           create: {
             userId: req.user.id,
@@ -470,6 +497,121 @@ router.get("/community", authenticate, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch communities" });
+  }
+});
+
+// ─── Verification ────────────────────────────────────────────────────────────
+
+router.get("/:teamId/verification", authenticate, async (req, res) => {
+  try {
+    const { teamId } = req.params;
+
+    const team = await prisma.team.findUnique({
+      where: { id: teamId },
+      select: { isVerified: true },
+    });
+    if (!team) return res.status(404).json({ error: "Team not found" });
+
+    const verifications = await prisma.teamVerification.findMany({
+      where: { teamId },
+      include: {
+        admin: {
+          select: { id: true, name: true, nickname: true, avatar: true },
+        },
+      },
+      orderBy: { verifiedAt: "asc" },
+    });
+
+    res.json({
+      success: true,
+      verificationCount: verifications.length,
+      requiredVerifications: REQUIRED_TEAM_VERIFICATIONS,
+      isVerified: team.isVerified,
+      verifiedByMe: verifications.some((v) => v.adminUserId === req.user.id),
+      verifiers: verifications.map((v) => ({
+        adminUserId: v.adminUserId,
+        verifiedAt: v.verifiedAt,
+        admin: v.admin,
+      })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch team verification status" });
+  }
+});
+
+router.post("/:teamId/verify", authenticate, async (req, res) => {
+  try {
+    if (!requireGlobalAdmin(req, res)) return;
+
+    const { teamId } = req.params;
+
+    const team = await prisma.team.findUnique({ where: { id: teamId } });
+    if (!team) return res.status(404).json({ error: "Team not found" });
+
+    await prisma.teamVerification.upsert({
+      where: { teamId_adminUserId: { teamId, adminUserId: req.user.id } },
+      update: {},
+      create: { teamId, adminUserId: req.user.id },
+    });
+
+    const verificationCount = await prisma.teamVerification.count({
+      where: { teamId },
+    });
+    const isVerified = verificationCount >= REQUIRED_TEAM_VERIFICATIONS;
+
+    if (isVerified !== team.isVerified) {
+      await prisma.team.update({ where: { id: teamId }, data: { isVerified } });
+    }
+
+    const payload = {
+      teamId,
+      verificationCount,
+      requiredVerifications: REQUIRED_TEAM_VERIFICATIONS,
+      isVerified,
+    };
+
+    sendRealtimeUpdate("team_verification_updated", payload, req.user.id);
+
+    res.status(201).json({ success: true, ...payload, verifiedByMe: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to verify team" });
+  }
+});
+
+router.delete("/:teamId/verify", authenticate, async (req, res) => {
+  try {
+    if (!requireGlobalAdmin(req, res)) return;
+
+    const { teamId } = req.params;
+
+    await prisma.teamVerification
+      .delete({
+        where: { teamId_adminUserId: { teamId, adminUserId: req.user.id } },
+      })
+      .catch(() => {});
+
+    const verificationCount = await prisma.teamVerification.count({
+      where: { teamId },
+    });
+    const isVerified = verificationCount >= REQUIRED_TEAM_VERIFICATIONS;
+
+    await prisma.team.update({ where: { id: teamId }, data: { isVerified } });
+
+    const payload = {
+      teamId,
+      verificationCount,
+      requiredVerifications: REQUIRED_TEAM_VERIFICATIONS,
+      isVerified,
+    };
+
+    sendRealtimeUpdate("team_verification_updated", payload, req.user.id);
+
+    res.json({ success: true, ...payload, verifiedByMe: false });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to remove verification" });
   }
 });
 
@@ -1412,6 +1554,32 @@ router.post("/:teamId/wallet/rescan", authenticate, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to start team wallet rescan" });
+  }
+});
+
+router.get("/:teamId/wallet/sync-status", authenticate, async (req, res) => {
+  try {
+    const { teamId } = req.params;
+
+    const member =
+      req.user.role === "ADMIN"
+        ? true
+        : await getTeamMember(teamId, req.user.id);
+    if (!member) return res.status(403).json({ error: "Access denied" });
+
+    const wallet = await prisma.teamWallet.findUnique({ where: { teamId } });
+    if (!wallet)
+      return res.status(404).json({ error: "No wallet found for this team" });
+
+    const params = await buildTeamParams(teamId, wallet);
+    const data = await executeZingoCliSync("sync status", params);
+
+    sendToUser(req.user.id, "team_sync_status_fetched", { teamId, data });
+
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch team wallet sync status" });
   }
 });
 
