@@ -1514,7 +1514,7 @@ router.get("/:teamId/wallet/transactions", authenticate, async (req, res) => {
     if (!wallet)
       return res.status(404).json({ error: "No wallet found for this team" });
 
-    const params = buildTeamParams(teamId, wallet);
+    const params = await buildTeamParams(teamId, wallet);
     const transactions = await executeZingoCliTransactions(params);
 
     sendToUser(req.user.id, "team_transactions_fetched", {
@@ -1546,7 +1546,7 @@ router.post("/:teamId/wallet/rescan", authenticate, async (req, res) => {
     if (!wallet)
       return res.status(404).json({ error: "No wallet found for this team" });
 
-    const params = buildTeamParams(teamId, wallet);
+    const params = await buildTeamParams(teamId, wallet);
     await executeZingoCliRescan("rescan", params);
 
     sendToUser(req.user.id, "team_rescan_started", { teamId });

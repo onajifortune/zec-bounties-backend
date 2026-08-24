@@ -111,9 +111,27 @@ async function getDefaultZcashParams(ownerId) {
   };
 }
 
+function getSystemWalletParams() {
+  const { LOGIN_WALLET_CHAIN, ZCASH_SERVER_URL, LOGIN_WALLET_DATA_DIR } =
+    process.env;
+
+  if (!LOGIN_WALLET_CHAIN || !ZCASH_SERVER_URL || !LOGIN_WALLET_DATA_DIR) {
+    throw new Error(
+      "System wallet not configured: set LOGIN_WALLET_CHAIN, ZCASH_SERVER_URL, LOGIN_WALLET_DATA_DIR",
+    );
+  }
+
+  return {
+    chain: LOGIN_WALLET_CHAIN,
+    serverUrl: ZCASH_SERVER_URL,
+    dataDir: LOGIN_WALLET_DATA_DIR,
+  };
+}
+
 module.exports = {
   getLatestZcashParams,
   getDefaultZcashParams,
   getVerificationZcashParams,
   getWalletDataDir,
+  getSystemWalletParams,
 };

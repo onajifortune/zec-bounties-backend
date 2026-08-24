@@ -7,7 +7,7 @@ const { authenticate, isAdmin } = require("../middleware/auth");
 const { verifyZaddress, verifyUaddress } = require("../helpers/db-query.js");
 const {
   getLatestZcashParams,
-  getLatestZcashParamsForClientUser,
+  getSystemWalletParams,
 } = require("../helpers/zcash/zcashHelper.js");
 const sendMail = require("../utils/sendMail");
 const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo");
@@ -20,114 +20,6 @@ const SECRET = process.env.JWT_SECRET;
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
-
-// Register
-router.post("/", async (req, res) => {
-  let { name, email, password, role, z_address } = req.body;
-
-  name = name?.trim();
-  email = email?.trim().toLowerCase();
-  password = password?.trim();
-  role = role?.trim();
-  z_address = z_address?.trim();
-
-  console.log(name, email, password, role, z_address);
-
-  const hashed = await bcrypt.hash(password, 10);
-
-  try {
-    const user = await prisma.user.create({
-      data: { name, email, password: hashed, role, z_address },
-    });
-    res.json(user);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Register
-router.post("/register", async (req, res) => {
-  try {
-    let { name, email, password, role, z_address } = req.body;
-
-    name = name?.trim();
-    email = email?.trim().toLowerCase();
-    password = password?.trim();
-    role = role?.trim().toUpperCase();
-    z_address = z_address?.trim();
-
-    const hashed = await bcrypt.hash(password, 10);
-
-    console.log(name, email, password, role, z_address);
-
-    const user = await prisma.user.create({
-      data: { name, email, password: hashed, role, z_address },
-    });
-    res.json(user);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Register admin
-router.post("/admin/register", async (req, res) => {
-  let { z_address } = req.body;
-
-  const password = "AdminPassword";
-  z_address = z_address?.trim();
-
-  const hashed = await bcrypt.hash(password, 10);
-
-  try {
-    const user = await prisma.user.create({
-      data: {
-        name: "Admin Fortune",
-        email: "admin@admin.com",
-        password: hashed,
-        role: "ADMIN",
-        z_address,
-      },
-    });
-    res.json(user);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Login
-router.post("/login", async (req, res) => {
-  const { email, password } = req.body;
-
-  const userPrime = await prisma.user.findUnique({
-    where: { email },
-    select: {
-      id: true,
-      name: true,
-      nickname: true,
-      email: true,
-      password: true,
-      role: true,
-      avatar: true,
-      z_address: true,
-      UA_address: true,
-      emailNotifications: true,
-    },
-  });
-
-  if (!userPrime) return res.status(401).send("Invalid credentials");
-
-  const match = bcrypt.compare(password, userPrime.password);
-
-  if (!match) return res.status(401).send("Invalid credentials");
-
-  const token = jwt.sign({ id: userPrime.id, role: userPrime.role }, SECRET, {
-    expiresIn: "1d",
-  });
-
-  const { password: _, ...user } = userPrime;
-
-  res.json({ token, user });
-});
 
 router.get("/github", (req, res) => {
   const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&scope=user:email`;
@@ -346,24 +238,9 @@ router.patch("/update-email-notifications", authenticate, async (req, res) => {
 router.post("/verify-zaddress", authenticate, async (req, res) => {
   try {
     const { z_address } = req.body;
-
-    // Get params based on user role
-    let params;
-    if (req.user.role === "CLIENT") {
-      params = await getLatestZcashParamsForClientUser();
-    } else {
-      params = await getLatestZcashParams(req.user.id);
-    }
-
-    if (!params) {
-      return res.status(404).json({
-        error: "No Zcash params found. Initialize wallet first.",
-      });
-    }
+    const params = getSystemWalletParams();
 
     const result = await verifyZaddress(z_address, params);
-    console.log("Verification result:", result);
-
     return res.json({ isVerified: result });
   } catch (err) {
     console.error("Error verifying Z-address:", err);
@@ -374,27 +251,12 @@ router.post("/verify-zaddress", authenticate, async (req, res) => {
 router.post("/verify-uaddress", authenticate, async (req, res) => {
   try {
     const { z_address } = req.body;
-
-    // Get params based on user role
-    let params;
-    if (req.user.role === "CLIENT") {
-      params = await getLatestZcashParamsForClientUser();
-    } else {
-      params = await getLatestZcashParams(req.user.id);
-    }
-
-    if (!params) {
-      return res.status(404).json({
-        error: "No Zcash params found. Initialize wallet first.",
-      });
-    }
+    const params = getSystemWalletParams();
 
     const result = await verifyUaddress(z_address, params);
-    console.log("Verification result:", result);
-
     return res.json({ isVerified: result });
   } catch (err) {
-    console.error("Error verifying Z-address:", err);
+    console.error("Error verifying U-address:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
