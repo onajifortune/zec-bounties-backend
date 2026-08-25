@@ -350,6 +350,7 @@ router.get("/", authenticate, async (req, res) => {
 router.get("/public", async (req, res) => {
   try {
     const teams = await prisma.team.findMany({
+      where: { isVerified: true },
       select: {
         id: true,
         name: true,
