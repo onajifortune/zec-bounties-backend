@@ -7,7 +7,7 @@ const { authenticate, isAdmin } = require("../middleware/auth");
 const { verifyZaddress, verifyUaddress } = require("../helpers/db-query.js");
 const {
   getLatestZcashParams,
-  getLatestZcashParamsForClientUser,
+  getSystemWalletParams,
 } = require("../helpers/zcash/zcashHelper.js");
 const sendMail = require("../utils/sendMail");
 const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo");
@@ -238,24 +238,9 @@ router.patch("/update-email-notifications", authenticate, async (req, res) => {
 router.post("/verify-zaddress", authenticate, async (req, res) => {
   try {
     const { z_address } = req.body;
-
-    // Get params based on user role
-    let params;
-    if (req.user.role === "CLIENT") {
-      params = await getLatestZcashParamsForClientUser();
-    } else {
-      params = await getLatestZcashParams(req.user.id);
-    }
-
-    if (!params) {
-      return res.status(404).json({
-        error: "No Zcash params found. Initialize wallet first.",
-      });
-    }
+    const params = getSystemWalletParams();
 
     const result = await verifyZaddress(z_address, params);
-    console.log("Verification result:", result);
-
     return res.json({ isVerified: result });
   } catch (err) {
     console.error("Error verifying Z-address:", err);
@@ -266,27 +251,12 @@ router.post("/verify-zaddress", authenticate, async (req, res) => {
 router.post("/verify-uaddress", authenticate, async (req, res) => {
   try {
     const { z_address } = req.body;
-
-    // Get params based on user role
-    let params;
-    if (req.user.role === "CLIENT") {
-      params = await getLatestZcashParamsForClientUser();
-    } else {
-      params = await getLatestZcashParams(req.user.id);
-    }
-
-    if (!params) {
-      return res.status(404).json({
-        error: "No Zcash params found. Initialize wallet first.",
-      });
-    }
+    const params = getSystemWalletParams();
 
     const result = await verifyUaddress(z_address, params);
-    console.log("Verification result:", result);
-
     return res.json({ isVerified: result });
   } catch (err) {
-    console.error("Error verifying Z-address:", err);
+    console.error("Error verifying U-address:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
