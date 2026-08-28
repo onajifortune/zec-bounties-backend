@@ -950,6 +950,21 @@ router.post("/:teamId/members", authenticate, async (req, res) => {
       });
     }
 
+    const invitedUsers = await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, role: true },
+    });
+
+    const ineligible = invitedUsers.filter(
+      (u) => u.role !== "TEAM" && u.role !== "ADMIN",
+    );
+
+    if (ineligible.length > 0 || invitedUsers.length !== userIds.length) {
+      return res.status(400).json({
+        error: "Only users with the TEAM or ADMIN role can be added to a team",
+      });
+    }
+
     const members = await Promise.all(
       userIds.map((userId) =>
         prisma.teamMember.upsert({
@@ -1890,7 +1905,6 @@ router.get("/:teamId/submissions", authenticate, async (req, res) => {
 
 // ─── Team Logo ───────────────────────────────────────────────────────────────
 
-// AFTER
 router.post(
   "/:teamId/logo",
   authenticate,
