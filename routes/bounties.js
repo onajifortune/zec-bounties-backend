@@ -1543,6 +1543,7 @@ router.get("/users", authenticate, async (req, res) => {
         avatar: true,
         emailNotifications: true,
         pushNotifications: true,
+        isRobin: true,
       },
     });
     await setCache(cacheKey, users, TTL.USERS);
