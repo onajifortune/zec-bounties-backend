@@ -29,6 +29,7 @@ const { resolvePayingWallet } = require("../helpers/zcash/resolvePayingWallet");
 const { buildPaymentListGrouped } = require("../helpers/db-query");
 const { delCache, deleteCacheByPattern } = require("../utils/cache");
 const executeZingoCliInfo = require("../utils/zingo/zingoLibInfo");
+const { randomUUID } = require("crypto");
 
 const { sendRealtimeUpdate, sendToUser } = require("../middleware/websocket");
 
@@ -40,6 +41,34 @@ const invalidateBounty = async (bountyId) => {
     deleteCacheByPattern("bounties:*"),
   ]);
 };
+
+// BigInt doesn't survive res.json; total ZEC supply in zatoshis still fits a
+// double, so Number is safe for amounts.
+const serializeTxRecord = (record) => ({
+  ...record,
+  amountZat: Number(record.amountZat),
+});
+
+// Clean failure before anything reached the network: record it and put the
+// bounties back in the payable set.
+async function releaseClaim(batchKey, bountyIds, errorDetail, raw) {
+  await prisma.$transaction([
+    prisma.transaction.updateMany({
+      where: { batchKey },
+      data: {
+        status: "FAILED",
+        errorDetail: errorDetail || null,
+        rawResult: raw || null,
+        settledAt: new Date(),
+      },
+    }),
+    prisma.bounty.updateMany({
+      where: { id: { in: bountyIds } },
+      data: { paymentInFlight: false },
+    }),
+  ]);
+  await Promise.all(bountyIds.map((id) => invalidateBounty(id)));
+}
 
 // List transactions (Admin)
 router.get("/", authenticate, isAdmin, async (req, res) => {
@@ -147,12 +176,7 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
     }
 
     // Resolve the acting admin's default wallet
-    const adminWallet = await prisma.zcashParams.findFirst({
-      where: {
-        ownerId: req.user.id,
-        isDefault: true,
-      },
-    });
+    const adminWallet = await getDefaultZcashParams(req.user.id);
 
     if (!adminWallet) {
       return res.status(400).json({
@@ -164,14 +188,6 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
     const bountyChainForWallet =
       adminWallet.chain === "mainnet" ? "MAIN" : "TEST";
 
-    adminWallet.dataDir = path.join(
-      process.cwd(),
-      "wallets",
-      req.user.id,
-      adminWallet.accountName,
-      adminWallet.chain,
-    );
-
     // Fetch the selected bounties with their assignees
     const bounties = await prisma.bounty.findMany({
       where: {
@@ -179,6 +195,7 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
         status: "DONE",
         isPaid: false,
         isApproved: true,
+        paymentInFlight: false,
       },
       include: {
         assigneeUser: {
@@ -212,8 +229,6 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
     const paymentList = [];
     const skipped = [];
 
-    console.log(bounties);
-
     for (const bounty of bounties) {
       const payoutAddress =
         bounty.chain === "MAIN"
@@ -234,6 +249,7 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
         amount: Math.round(bounty.bountyAmount * 1e8), // zatoshis
         memo: `Bounty: ${bounty.title} (ID: ${bounty.id})`,
         bountyId: bounty.id,
+        chain: bounty.chain,
       });
     }
 
@@ -245,16 +261,106 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
       });
     }
 
+    // ── Claim before send ───────────────────────────────────────────────
+    // Flip paymentInFlight -> true and write PENDING Transaction rows, all
+    // in one DB transaction, BEFORE anything is sent. The where-clause here
+    // is the compare-and-swap: if another request already claimed any of
+    // these bounties, `count` comes back lower than expected and we throw
+    // to force a rollback (an interactive transaction commits on return,
+    // so bailing with a plain return would still commit a partial claim).
+    const payableIds = paymentList.map((p) => p.bountyId);
+    const batchKey = randomUUID();
+    const claimConflict = new Error("claim-conflict");
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        const result = await tx.bounty.updateMany({
+          where: {
+            id: { in: payableIds },
+            status: "DONE",
+            isApproved: true,
+            isPaid: false,
+            paymentInFlight: false,
+          },
+          data: { paymentInFlight: true },
+        });
+
+        if (result.count !== payableIds.length) throw claimConflict;
+
+        await tx.transaction.createMany({
+          data: paymentList.map((p) => ({
+            bountyId: p.bountyId,
+            amountZat: BigInt(p.amount),
+            toAddress: p.address,
+            memo: p.memo,
+            batchKey,
+          })),
+        });
+      });
+    } catch (err) {
+      if (err !== claimConflict) throw err;
+      return res.status(409).json({
+        error:
+          "Some of the selected bounties are already being paid by another request. Refresh and try again.",
+      });
+    }
+
     console.log(
-      `💸 Paying ${paymentList.length} bounties from wallet "${adminWallet.accountName}" (admin: ${req.user.id})`,
+      `💸 Paying ${paymentList.length} bounties from wallet "${adminWallet.accountName}" (admin: ${req.user.id}, batch: ${batchKey})`,
     );
 
-    // Execute payment
-    const sendResult = await executeZingoQuickSend(paymentList, adminWallet);
+    // ── Send ─────────────────────────────────────────────────────────────
+    let sendResult;
+    try {
+      sendResult = await executeZingoQuickSend(paymentList, adminWallet);
+    } catch (err) {
+      // quicksend only rejects on timeout — by then the command was
+      // already written to the wallet process, so the send may have gone
+      // through. Outcome unknown: do NOT release the claim, or a retry
+      // could double-pay. Leave paymentInFlight = true and flag for a human.
+      console.error(
+        `⚠️ UNKNOWN payment outcome for batch ${batchKey} (bounties: ${payableIds.join(", ")}): ${err.message}`,
+      );
+      await prisma.transaction.updateMany({
+        where: { batchKey },
+        data: { status: "UNKNOWN" },
+      });
+      return res.status(502).json({
+        success: false,
+        outcome: "unknown",
+        error: "Payment outcome unknown — the send may have completed",
+        details:
+          "The wallet didn't confirm in time. These bounties are locked and will NOT be auto-retried. Check the wallet's transaction history before taking further action.",
+        batchKey,
+      });
+    }
+
+    if (sendResult.timedOut) {
+      console.error(
+        `⚠️ UNKNOWN payment outcome for batch ${batchKey} (bounties: ${payableIds.join(", ")}): send timed out`,
+      );
+      await prisma.transaction.updateMany({
+        where: { batchKey },
+        data: { status: "UNKNOWN" },
+      });
+      return res.status(502).json({
+        success: false,
+        outcome: "unknown",
+        error: "Payment outcome unknown — the send may have completed",
+        details:
+          "The wallet didn't confirm in time. These bounties are locked and will NOT be auto-retried. Check the wallet's transaction history before taking further action.",
+        batchKey,
+      });
+    }
 
     if (sendResult.error) {
+      // Structured failure from the tool — nothing was broadcast, safe to
+      // release the claim so these bounties become payable again.
       const errorMessage = sendResult.error || "Unknown payment error";
       console.error("❌ Zingo payment error:", errorMessage);
+
+      await releaseClaim(batchKey, payableIds, errorMessage, sendResult.raw);
+
       return res.status(422).json({
         success: false,
         error: "Payment failed",
@@ -262,35 +368,37 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
       });
     }
 
+    // ── Clean success ────────────────────────────────────────────────────
     const txResult = sendResult[1];
+    const txid = sendResult.txids?.[0] ?? txResult?.txid ?? null;
+    const paidAt = new Date();
 
-    // Mark all successfully queued bounties as paid
-    const paidBountyIds = paymentList.map((p) => p.bountyId);
-    await prisma.bounty.updateMany({
-      where: { id: { in: paidBountyIds } },
-      data: {
-        isPaid: true,
-        paymentAuthorized: true,
-        paidAt: new Date(),
-      },
-    });
-    await Promise.all(paidBountyIds.map((id) => invalidateBounty(id)));
+    await prisma.$transaction([
+      prisma.transaction.updateMany({
+        where: { batchKey },
+        data: { status: "BROADCAST", txid, settledAt: paidAt },
+      }),
+      prisma.bounty.updateMany({
+        where: { id: { in: payableIds } },
+        data: {
+          isPaid: true,
+          paymentAuthorized: true,
+          paidAt,
+          paymentInFlight: false,
+        },
+      }),
+    ]);
+    await Promise.all(payableIds.map((id) => invalidateBounty(id)));
 
-    // Store transaction record
-    // await storeTransactions(
-    //   txResult,
-    //   paymentList.reduce((sum, p) => sum + p.amount, 0),
-    // );
-
-    // ✅ Broadcast payment result to ALL admins (this is a shared event)
     sendRealtimeUpdate(
       "payment_authorized",
       {
         result: txResult,
-        paidCount: paidBountyIds.length,
+        paidCount: payableIds.length,
         skippedCount: skipped.length,
         skipped,
         walletAccountName: adminWallet.accountName,
+        batchKey,
       },
       req.user.id, // exclude sender since they get the HTTP response
     );
@@ -298,13 +406,74 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
     res.json({
       success: true,
       result: txResult,
-      paidCount: paidBountyIds.length,
+      batchKey,
+      paidCount: payableIds.length,
       skipped,
     });
   } catch (error) {
     console.error("Error in authorize-payment:", error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// Durable payout records (DB) — as opposed to GET / above, which is the live
+// wallet history and knows nothing about bounties.
+router.get("/records", authenticate, isAdmin, async (req, res) => {
+  try {
+    const records = await prisma.transaction.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      include: {
+        bounty: {
+          select: {
+            id: true,
+            title: true,
+            chain: true,
+            assigneeUser: { select: { id: true, name: true, nickname: true } },
+          },
+        },
+      },
+    });
+
+    res.json({ records: records.map(serializeTxRecord) });
+  } catch (error) {
+    console.error("Error fetching payment records:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/records/:id/resolve", authenticate, isAdmin, async (req, res) => {
+  const { outcome, txid } = req.body; // "broadcast" or "failed"
+  const record = await prisma.transaction.findUnique({
+    where: { id: req.params.id },
+  });
+  if (record.status !== "UNKNOWN")
+    return res.status(409).json({ error: "already settled" });
+
+  if (outcome === "broadcast") {
+    await prisma.$transaction([
+      prisma.transaction.update({
+        where: { id: record.id },
+        data: { status: "BROADCAST", txid, settledAt: new Date() },
+      }),
+      prisma.bounty.update({
+        where: { id: record.bountyId },
+        data: { isPaid: true, paymentInFlight: false, paidAt: new Date() },
+      }),
+    ]);
+  } else {
+    await prisma.$transaction([
+      prisma.transaction.update({
+        where: { id: record.id },
+        data: { status: "FAILED", settledAt: new Date() },
+      }),
+      prisma.bounty.update({
+        where: { id: record.bountyId },
+        data: { paymentInFlight: false },
+      }),
+    ]);
+  }
+  res.json({ success: true });
 });
 
 router.post(
@@ -323,8 +492,8 @@ router.post(
         });
       }
 
-      const dueBounties = await findDueBounties();
-      const paymentList = await buildPaymentList(dueBounties);
+      // const dueBounties = await findDueBounties();
+      // const paymentList = await buildPaymentList(dueBounties);
 
       const bounty = await prisma.bounty.findUnique({
         where: { id: bountyId },
