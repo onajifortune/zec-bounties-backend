@@ -271,8 +271,14 @@ router.post("/", authenticate, async (req, res) => {
       }
     }
 
-    const resolvedAssignee = assignee === "none" ? null : assignee;
-    const isClient = req.user.role === "CLIENT";
+    const isHunter = req.user.role === "HUNTER";
+    const canAssignOthers = ["ADMIN", "TEAM"].includes(req.user.role);
+
+    const resolvedAssignee = isHunter
+      ? req.user.id
+      : canAssignOthers && assignee !== "none"
+        ? assignee
+        : null;
 
     const bounty = await prisma.bounty.create({
       data: {
@@ -289,14 +295,13 @@ router.post("/", authenticate, async (req, res) => {
         // Denormalized from the team at creation time — a bounty's privacy
         // always tracks its team's current privacy setting.
         isPrivate: team?.isPrivate ?? false,
-        ...(isClient &&
-          resolvedAssignee && {
-            assignees: {
-              create: {
-                userId: resolvedAssignee,
-              },
+        ...(resolvedAssignee && {
+          assignees: {
+            create: {
+              userId: resolvedAssignee,
             },
-          }),
+          },
+        }),
       },
       include: {
         createdByUser: {
