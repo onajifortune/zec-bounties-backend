@@ -319,7 +319,7 @@ router.post("/", authenticate, async (req, res) => {
 
     const recipients = await getBroadcastRecipients(bounty);
     sendRealtimeUpdate("new_bounties", bounty, req.user.id, recipients);
-    await deleteCacheByPattern("bounties:*");
+    await bumpVersion("bounties");
 
     // Respond immediately — don't block on notifications
     res.status(201).json(bounty);
