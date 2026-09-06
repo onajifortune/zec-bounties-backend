@@ -193,6 +193,18 @@ const invalidateSubmissions = async (bountyId, submittedBy) => {
   ]);
 };
 
+const ONBOARDED_ROLES = ["ADMIN", "HUNTER", "TEAM"];
+
+function requireOnboarded(req, res) {
+  if (!ONBOARDED_ROLES.includes(req.user.role)) {
+    res
+      .status(403)
+      .json({ error: "Complete onboarding before performing this action" });
+    return false;
+  }
+  return true;
+}
+
 async function canManageBounty(bounty, user) {
   if (user.role === "ADMIN") return true;
   if (bounty.createdBy === user.id) return true;
@@ -226,6 +238,7 @@ async function canViewPrivateBounty(bounty, user) {
 // ─── Create bounty ────────────────────────────────────────────────────────────
 router.post("/", authenticate, async (req, res) => {
   try {
+    if (!requireOnboarded(req, res)) return;
     const {
       title,
       description,
@@ -961,6 +974,8 @@ router.patch("/:id/status", authenticate, isAdmin, async (req, res) => {
 // ─── Submit work ──────────────────────────────────────────────────────────────
 router.post("/:id/submit", authenticate, async (req, res) => {
   try {
+    if (!requireOnboarded(req, res)) return;
+
     const { id: bountyId } = req.params;
     const { description, deliverableUrl } = req.body;
     const userId = req.user.id;
@@ -1996,6 +2011,8 @@ router.delete(
 // ─── Apply to bounty ──────────────────────────────────────────────────────────
 router.post("/apply", authenticate, async (req, res) => {
   try {
+    if (!requireOnboarded(req, res)) return;
+
     const { bountyId, applicantId, message } = req.body;
 
     const bounty = await prisma.bounty.findUnique({
