@@ -377,7 +377,7 @@ router.post("/", authenticate, async (req, res) => {
           sendPushToOptedIn(pushCandidateIds, {
             title: "New Bounty Available",
             body: `${bounty.title} — ${bounty.bountyAmount} ZEC`,
-            url: `/bounties/${bounty.id}`,
+            url: `/bounty/${bounty.id}`,
           }),
           Promise.all(
             emailRecipients.map((recipient) =>
