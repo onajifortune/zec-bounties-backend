@@ -235,10 +235,88 @@ async function canViewPrivateBounty(bounty, user) {
   return !!(teamMember || favorite);
 }
 
+// ─── Weekly bounty-creation quota ───────────────────────────────────────────
+
+// Tier breakpoints match the admin "Star Override" list in the KPIs dashboard
+// (avatar:1 / avatar:5 / avatar:10 / avatar:15 / avatar:25 / avatar:50).
+// Gold star = 15+ completed tasks.
+const GOLD_STAR_THRESHOLD = 15;
+const WEEKLY_BOUNTY_LIMIT_GOLD = 2;
+const WEEKLY_BOUNTY_LIMIT_STANDARD = 1;
+
+// Mirrors the "avatar:N" override the admin badge modal writes via
+// PATCH /api/kpis/users/:id/badges. An explicit override always wins over
+// the live completed-count calculation — same contract BadgeIcons follows.
+function getAvatarOverrideTier(badges) {
+  if (!Array.isArray(badges)) return null;
+  for (const b of badges) {
+    const match = typeof b === "string" && b.match(/^avatar:(\d+)$/);
+    if (match) return parseInt(match[1], 10);
+  }
+  return null;
+}
+
+async function isGoldStarOrAbove(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { badges: true },
+  });
+
+  const overrideTier = getAvatarOverrideTier(user?.badges);
+  if (overrideTier !== null) return overrideTier >= GOLD_STAR_THRESHOLD;
+
+  const completed = await prisma.bounty.count({
+    where: { assignee: userId, status: "DONE" },
+  });
+
+  return completed >= GOLD_STAR_THRESHOLD;
+}
+
+// Fixed calendar week, Monday 00:00 UTC through the following Monday 00:00 UTC.
+function getCalendarWeekBounds(date = new Date()) {
+  const d = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+  const day = d.getUTCDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const start = new Date(d);
+  start.setUTCDate(d.getUTCDate() + diffToMonday);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 7);
+  return { start, end };
+}
+
+async function getWeeklyBountyQuota(userId) {
+  const isGold = await isGoldStarOrAbove(userId);
+  const limit = isGold
+    ? WEEKLY_BOUNTY_LIMIT_GOLD
+    : WEEKLY_BOUNTY_LIMIT_STANDARD;
+
+  const { start, end } = getCalendarWeekBounds();
+
+  const used = await prisma.bounty.count({
+    where: { createdBy: userId, dateCreated: { gte: start, lt: end } },
+  });
+
+  return { limit, used, remaining: Math.max(0, limit - used), resetsAt: end };
+}
+
 // ─── Create bounty ────────────────────────────────────────────────────────────
 router.post("/", authenticate, async (req, res) => {
   try {
     if (!requireOnboarded(req, res)) return;
+
+    if (req.user.role !== "ADMIN") {
+      const quota = await getWeeklyBountyQuota(req.user.id);
+      if (quota.remaining <= 0) {
+        return res.status(429).json({
+          error: `Weekly bounty creation limit reached (${quota.limit} per week)`,
+          ...quota,
+        });
+      }
+    }
+
     const {
       title,
       description,
@@ -2159,6 +2237,25 @@ router.get("/mine", authenticate, async (req, res) => {
   } catch (error) {
     console.error("Error fetching my bounties:", error);
     res.status(500).json({ error: "Failed to fetch your bounties" });
+  }
+});
+
+// ─── My bounty-creation quota ────────────────────────────────────────────────
+router.get("/mine/quota", authenticate, async (req, res) => {
+  try {
+    if (req.user.role === "ADMIN") {
+      return res.json({
+        limit: null,
+        used: 0,
+        remaining: null,
+        resetsAt: null,
+      });
+    }
+    const quota = await getWeeklyBountyQuota(req.user.id);
+    res.json(quota);
+  } catch (error) {
+    console.error("Error fetching bounty quota:", error);
+    res.status(500).json({ error: "Failed to fetch quota" });
   }
 });
 
