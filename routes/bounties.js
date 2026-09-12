@@ -241,8 +241,8 @@ async function canViewPrivateBounty(bounty, user) {
 // (avatar:1 / avatar:5 / avatar:10 / avatar:15 / avatar:25 / avatar:50).
 // Gold star = 15+ completed tasks.
 const GOLD_STAR_THRESHOLD = 15;
-const WEEKLY_BOUNTY_LIMIT_GOLD = 2;
-const WEEKLY_BOUNTY_LIMIT_STANDARD = 1;
+const WEEKLY_BOUNTY_LIMIT_GOLD = 20;
+const WEEKLY_BOUNTY_LIMIT_STANDARD = 10;
 
 // Mirrors the "avatar:N" override the admin badge modal writes via
 // PATCH /api/kpis/users/:id/badges. An explicit override always wins over
@@ -2269,22 +2269,26 @@ router.get("/stats/totals", authenticate, isAdmin, async (req, res) => {
 
     const [totalAmountResult, countResult, unpaidDoneCount] = await Promise.all(
       [
-        // Sum ALL bounty amounts — no pagination, one DB round-trip
         prisma.bounty.aggregate({
           where: { chain: "MAIN" },
           _sum: { bountyAmount: true },
           _count: { id: true },
         }),
-        // Separate counts per status so the dashboard can show accurate numbers
         prisma.bounty.groupBy({
           by: ["status"],
           where: { chain: "MAIN" },
           _count: { id: true },
         }),
-        // DONE but not yet paid — groupBy status alone can't capture this,
-        // since isPaid is orthogonal to status
+        // DONE, not yet paid, AND not already exported — an exported bounty
+        // is already in someone's payout queue outside the app, so it
+        // shouldn't keep counting as "due" until isPaid catches up.
         prisma.bounty.count({
-          where: { chain: "MAIN", status: "DONE", isPaid: false },
+          where: {
+            chain: "MAIN",
+            status: "DONE",
+            isPaid: false,
+            exportedAt: null,
+          },
         }),
       ],
     );
@@ -2310,6 +2314,51 @@ router.get("/stats/totals", authenticate, isAdmin, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch stats" });
   }
 });
+
+// ─── Mark completed bounties as exported (Admin) ─────────────────────────────
+// First-exported-wins: only stamps rows that haven't been exported before, so
+// a later re-export never overwrites the original exportedAt/exportedBy.
+router.patch(
+  "/export-completed/mark-exported",
+  authenticate,
+  isAdmin,
+  async (req, res) => {
+    try {
+      const { bountyIds } = req.body;
+      if (!Array.isArray(bountyIds) || bountyIds.length === 0) {
+        return res
+          .status(400)
+          .json({ error: "bountyIds must be a non-empty array" });
+      }
+
+      const exportedAt = new Date();
+      const result = await prisma.bounty.updateMany({
+        where: { id: { in: bountyIds }, exportedAt: null },
+        data: { exportedAt, exportedBy: req.user.id },
+      });
+
+      // exportedAt now feeds unpaidDoneCount in /stats/totals, so that cache
+      // is stale the moment this commits — not just the versioned bounty
+      // list/detail caches.
+      await Promise.all([bumpVersion("bounties"), delCache("stats:totals")]);
+
+      sendRealtimeUpdate(
+        "bounties_exported",
+        { bountyIds, exportedAt },
+        req.user.id,
+      );
+
+      res.json({
+        message: "Marked as exported",
+        newlyMarked: result.count,
+        exportedAt,
+      });
+    } catch (error) {
+      console.error("Error marking bounties exported:", error);
+      res.status(500).json({ error: "Failed to mark bounties exported" });
+    }
+  },
+);
 
 // ─── Get single bounty ────────────────────────────────────────────────────
 router.get("/:id", optionalAuthenticate, async (req, res) => {

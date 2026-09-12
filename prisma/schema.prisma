@@ -83,6 +83,8 @@ model Bounty {
   updatedAt         DateTime            @updatedAt @default(now())
   isPrivate         Boolean             @default(false)
   paymentInFlight   Boolean             @default(false)
+  exportedAt        DateTime?
+  exportedBy        String?
 
 
   @@index([status])
