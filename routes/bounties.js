@@ -241,8 +241,16 @@ async function canViewPrivateBounty(bounty, user) {
 // (avatar:1 / avatar:5 / avatar:10 / avatar:15 / avatar:25 / avatar:50).
 // Gold star = 15+ completed tasks.
 const GOLD_STAR_THRESHOLD = 15;
-const WEEKLY_BOUNTY_LIMIT_GOLD = 2;
-const WEEKLY_BOUNTY_LIMIT_STANDARD = 1;
+
+const WEEKLY_BOUNTY_LIMIT_GOLD =
+  process.env.NODE_ENV === "production"
+    ? 2
+    : Number(process.env.WEEKLY_BOUNTY_LIMIT_GOLD ?? 2);
+
+const WEEKLY_BOUNTY_LIMIT_STANDARD =
+  process.env.NODE_ENV === "production"
+    ? 1
+    : Number(process.env.WEEKLY_BOUNTY_LIMIT_STANDARD ?? 1);
 
 // Mirrors the "avatar:N" override the admin badge modal writes via
 // PATCH /api/kpis/users/:id/badges. An explicit override always wins over
