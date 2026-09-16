@@ -1349,6 +1349,7 @@ router.patch(
     try {
       const { submissionId } = req.params;
       const { status, reviewNotes } = req.body;
+      const userId = req.user.id;
 
       if (!["approved", "rejected", "needs_revision"].includes(status)) {
         return res.status(400).json({ error: "Invalid review status" });
@@ -1372,8 +1373,6 @@ router.patch(
       if (!submission)
         return res.status(404).json({ error: "Submission not found" });
 
-      // Approving drives the bounty to DONE and pays the submitter —
-      // administration, not ownership. Same bar as application accept/reject.
       if (!(await canAdministerBounty(submission.bounty, req.user))) {
         return res.status(403).json({
           error: "You do not have permission to review this submission",
