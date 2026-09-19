@@ -117,6 +117,7 @@ model BountyApplication {
   bountyId      String
   applicantId   String
   message       String
+  discordUsername String?
   status        String    @default("pending")
   appliedAt     DateTime  @default(now())
   reviewedAt    DateTime?

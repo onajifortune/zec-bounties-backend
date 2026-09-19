@@ -19,6 +19,7 @@ const {
 } = require("../utils/cache");
 const sendMail = require("../utils/sendMail");
 const notifyUser = require("../utils/notifyUser");
+const { notifyDiscordAssignment } = require("../utils/discordWebhook");
 const { REQUIRED_TEAM_VERIFICATIONS } = require("../utils/constants");
 
 // ─── Email settings ───────────────────────────────────────────────────────────
@@ -836,6 +837,33 @@ router.post("/:id/assignees", authenticate, async (req, res) => {
     sendRealtimeUpdate("bounty_updated", freshBounty, req.user.id); // ← new
     await invalidateBounty(bountyId);
     res.status(200).json({ assignees });
+
+    // Notify the Discord bot for each newly added assignee who supplied a
+    // Discord username on their application. Isolated in its own try/catch
+    // (response already sent) so a webhook failure never surfaces as a 500.
+    try {
+      const addedUserIds = assignees
+        .map((a) => a.userId)
+        .filter((userId) => !existingAssigneeIds.has(userId));
+
+      for (const userId of addedUserIds) {
+        const application = await prisma.bountyApplication.findFirst({
+          where: { bountyId, applicantId: userId },
+          orderBy: { appliedAt: "desc" },
+          select: { discordUsername: true },
+        });
+
+        if (application?.discordUsername) {
+          await notifyDiscordAssignment({
+            discordUsername: application.discordUsername,
+            bountyId,
+            bountyTitle: bounty.title,
+          });
+        }
+      }
+    } catch (webhookErr) {
+      console.error("Discord webhook notification failed:", webhookErr);
+    }
 
     try {
       console.log("[assignee notify] notifyUsers:", notifyUsers);
@@ -2149,7 +2177,9 @@ router.post("/apply", authenticate, async (req, res) => {
   try {
     if (!requireOnboarded(req, res)) return;
 
-    const { bountyId, applicantId, message } = req.body;
+    const { bountyId, applicantId, message, discordUsername } = req.body;
+
+    console.log("poll", req.body);
 
     const bounty = await prisma.bounty.findUnique({
       where: { id: bountyId },
@@ -2180,7 +2210,12 @@ router.post("/apply", authenticate, async (req, res) => {
         .json({ error: "You have already applied to this bounty" });
 
     const application = await prisma.bountyApplication.create({
-      data: { bountyId, applicantId, message: message.trim() },
+      data: {
+        bountyId,
+        applicantId,
+        message: message.trim(),
+        discordUsername: discordUsername?.trim() || null,
+      },
       include: {
         bounty: { select: { id: true, title: true, bountyAmount: true } },
         applicantUser: { select: USER_SELECT_MINIMAL },
