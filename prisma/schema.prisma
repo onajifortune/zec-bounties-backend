@@ -28,6 +28,12 @@ model User {
   UA_address           String?
   avatar               String?
   githubId             String?
+
+  discordUserId        String?   @unique
+  discordUsername      String?
+  discordGlobalName    String?
+  discordConnectedAt   DateTime?
+
   isRobin              Boolean             @default(false)
   isManOfSteel         Boolean             @default(false)
   bio                  String?
@@ -85,6 +91,7 @@ model Bounty {
   paymentInFlight   Boolean             @default(false)
   exportedAt        DateTime?
   exportedBy        String?
+  discordThreadId  String?
 
 
   @@index([status])
@@ -117,6 +124,7 @@ model BountyApplication {
   bountyId      String
   applicantId   String
   message       String
+  discordUsername String? 
   status        String    @default("pending")
   appliedAt     DateTime  @default(now())
   reviewedAt    DateTime?

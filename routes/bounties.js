@@ -19,6 +19,8 @@ const {
 } = require("../utils/cache");
 const sendMail = require("../utils/sendMail");
 const notifyUser = require("../utils/notifyUser");
+const { notifyNewBounty } = require("../utils/discord/discordNotify");
+const { notifyAssignment } = require("../utils/discord/discordAssignWebhook");
 const { REQUIRED_TEAM_VERIFICATIONS } = require("../utils/constants");
 
 // ─── Email settings ───────────────────────────────────────────────────────────
@@ -131,6 +133,7 @@ const USER_SELECT_MINIMAL = {
   name: true,
   nickname: true,
   email: true,
+  discordUsername: true,
 };
 
 // export routes (payments)
@@ -437,6 +440,8 @@ router.post("/", authenticate, async (req, res) => {
     sendRealtimeUpdate("new_bounties", bounty, req.user.id, recipients);
     await bumpVersion("bounties");
 
+    if (!bounty.isPrivate) notifyNewBounty(bounty);
+
     // Respond immediately — don't block on notifications
     res.status(201).json(bounty);
 
@@ -462,9 +467,6 @@ router.post("/", authenticate, async (req, res) => {
 
         const otherUsers = users.filter((u) => u.id !== req.user.id);
 
-        // in the bounty creation IIFE, right after building otherUsers
-        console.log("otherUsers sample:", otherUsers.slice(0, 3));
-
         const emailRecipients = otherUsers
           .filter((u) => u.emailNotifications !== false)
           .map((u) => u.email)
@@ -473,8 +475,6 @@ router.post("/", authenticate, async (req, res) => {
         const pushCandidateIds = otherUsers
           .filter((u) => u.pushNotifications)
           .map((u) => u.id);
-
-        console.log("pushCandidateIds:", pushCandidateIds);
 
         await Promise.all([
           sendPushToOptedIn(pushCandidateIds, {
@@ -836,6 +836,36 @@ router.post("/:id/assignees", authenticate, async (req, res) => {
     sendRealtimeUpdate("bounty_updated", freshBounty, req.user.id); // ← new
     await invalidateBounty(bountyId);
     res.status(200).json({ assignees });
+
+    // Discord assignment webhook — fire-and-forget, only for newly added assignees
+    (async () => {
+      try {
+        const newlyAdded = assignees.filter(
+          (a) => !existingAssigneeIds.has(a.userId),
+        );
+        if (newlyAdded.length === 0) return;
+
+        const users = await prisma.user.findMany({
+          where: { id: { in: newlyAdded.map((a) => a.userId) } },
+          select: { id: true, discordUsername: true },
+        });
+        const discordByUser = new Map(
+          users.map((u) => [u.id, u.discordUsername]),
+        );
+
+        await Promise.all(
+          newlyAdded.map((a) =>
+            notifyAssignment({
+              discordUsername: discordByUser.get(a.userId),
+              bountyId,
+              bountyTitle: bounty.title,
+            }),
+          ),
+        );
+      } catch (err) {
+        console.error("Discord assign webhook batch failed:", err);
+      }
+    })();
 
     try {
       console.log("[assignee notify] notifyUsers:", notifyUsers);
@@ -2093,6 +2123,15 @@ Your application was accepted and you've been assigned to "${bountyTitle}". You 
         `,
       }).catch((mailErr) => {
         console.error("Assignment notification email failed:", mailErr);
+      });
+    }
+
+    // Fire-and-forget Discord notification — mirrors the /:id/assignees path
+    if (status === "accepted") {
+      notifyAssignment({
+        discordUsername: result.applicantUser?.discordUsername,
+        bountyId: application.bountyId,
+        bountyTitle: application.bounty?.title ?? "a bounty",
       });
     }
   } catch (err) {
