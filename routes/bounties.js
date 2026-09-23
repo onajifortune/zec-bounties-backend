@@ -357,6 +357,10 @@ router.post("/", authenticate, async (req, res) => {
       teamId,
     } = req.body;
 
+    // Only admins may create a pre-approved bounty. Non-admin callers'
+    // isApproved value is ignored outright, mirroring the guard on PUT /:id.
+    const resolvedIsApproved = req.user.role === "ADMIN" ? !!isApproved : false;
+
     if (chain && !["MAIN", "TEST"].includes(chain)) {
       return res.status(400).json({ error: "Invalid chain value" });
     }
@@ -407,7 +411,7 @@ router.post("/", authenticate, async (req, res) => {
         timeToComplete: new Date(timeToComplete),
         createdBy: req.user.id,
         assignee: resolvedAssignee,
-        isApproved,
+        isApproved: resolvedIsApproved,
         categoryId,
         ...(chain && { chain }),
         ...(teamId && { teamId }),
