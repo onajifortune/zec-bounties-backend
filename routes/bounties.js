@@ -986,6 +986,14 @@ router.delete("/:id/assignees/:userId", authenticate, async (req, res) => {
 // ─── Get assignees for a bounty ───────────────────────────────────────────────
 router.get("/:id/assignees", authenticate, async (req, res) => {
   try {
+    const bounty = await prisma.bounty.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, isPrivate: true, createdBy: true, teamId: true },
+    });
+    if (!bounty) return res.status(404).json({ error: "Bounty not found" });
+    if (!(await canViewPrivateBounty(bounty, req.user))) {
+      return res.status(404).json({ error: "Bounty not found" });
+    }
     const cacheKey = `assignees:${req.params.id}`;
     const cached = await getCache(cacheKey);
     if (cached) return res.json(cached);
@@ -1712,6 +1720,18 @@ router.patch(
 
 // ─── Fetch all users ──────────────────────────────────────────────────────────
 router.get("/users", authenticate, async (req, res) => {
+  const cacheKey = "users:public";
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
+  const users = await prisma.user.findMany({
+    select: { id: true, name: true, nickname: true, avatar: true, role: true },
+  });
+  await setCache(cacheKey, users, TTL.USERS);
+  res.json(users);
+});
+
+// ─── Fetch all users ──────────────────────────────────────────────────────────
+router.get("/users/full", authenticate, isAdmin, async (req, res) => {
   try {
     const cacheKey = "users:all";
     const cached = await getCache(cacheKey);
@@ -2188,7 +2208,8 @@ router.post("/apply", authenticate, async (req, res) => {
   try {
     if (!requireOnboarded(req, res)) return;
 
-    const { bountyId, applicantId, message } = req.body;
+    const { bountyId, message } = req.body;
+    const applicantId = req.user.id;
 
     const bounty = await prisma.bounty.findUnique({
       where: { id: bountyId },
@@ -2217,6 +2238,9 @@ router.post("/apply", authenticate, async (req, res) => {
       return res
         .status(400)
         .json({ error: "You have already applied to this bounty" });
+
+    if (!message || !message.trim())
+      return res.status(400).json({ error: "Message is required" });
 
     const application = await prisma.bountyApplication.create({
       data: { bountyId, applicantId, message: message.trim() },
