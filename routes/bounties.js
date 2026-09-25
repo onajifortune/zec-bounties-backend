@@ -22,130 +22,30 @@ const notifyUser = require("../utils/notifyUser");
 const { notifyNewBounty } = require("../utils/discord/discordNotify");
 const { notifyAssignment } = require("../utils/discord/discordAssignWebhook");
 const { REQUIRED_TEAM_VERIFICATIONS } = require("../utils/constants");
+const {
+  USER_SELECT,
+  USER_SELECT_PUBLIC,
+  USER_SELECT_FULL,
+  USER_SELECT_WITH_ROLE,
+  USER_SELECT_BASIC,
+  USER_SELECT_MINIMAL,
+  USER_SELECT_EXPORT,
+} = require("../utils/userSelects");
+const {
+  sendMailIfEnabled,
+  sendPushToOptedIn,
+  getBroadcastRecipients,
+  invalidateBounty,
+  ONBOARDED_ROLES,
+  requireOnboarded,
+  getWeeklyBountyQuota,
+} = require("../utils/bountyHelpers");
 
 // ─── Email settings ───────────────────────────────────────────────────────────
 const ENABLE_EMAILS_IN_DEV = false; // Set to true when you want to test emails
 
 const shouldSendEmails =
   process.env.NODE_ENV === "production" || ENABLE_EMAILS_IN_DEV;
-
-const sendMailIfEnabled = async (options) => {
-  if (!shouldSendEmails) {
-    console.log(
-      `[EMAIL SKIPPED] ${options.subject} -> ${options.to} (NODE_ENV=${process.env.NODE_ENV})`,
-    );
-    return;
-  }
-
-  return sendMail(options);
-};
-
-// Sends a push notification only to users who opted in AND have an active subscription.
-// userIds: string[] — candidates to notify
-const sendPushToOptedIn = async (userIds, payload) => {
-  if (!userIds.length) return;
-  try {
-    const recipients = await prisma.user.findMany({
-      where: {
-        id: { in: userIds },
-        pushNotifications: true,
-        pushSubscriptions: { some: {} },
-      },
-      select: { id: true },
-    });
-    console.log("verified recipients:", recipients);
-    await Promise.all(recipients.map((u) => notifyUser(u.id, payload)));
-  } catch (err) {
-    console.error("Push notification failed:", err);
-  }
-};
-
-// Mirrors canViewPrivateBounty's rules, but returns the full recipient set
-// instead of checking one user — used to scope websocket broadcasts so a
-// private bounty's payload never reaches a socket outside its audience.
-// Returns null for public bounties, meaning "broadcast to everyone" (unchanged behavior).
-async function getBroadcastRecipients(bounty) {
-  if (!bounty.isPrivate) return null;
-
-  const recipients = new Set([bounty.createdBy]);
-
-  const admins = await prisma.user.findMany({
-    where: { role: "ADMIN" },
-    select: { id: true },
-  });
-  admins.forEach((a) => recipients.add(a.id));
-
-  if (bounty.teamId) {
-    const [members, favoriters] = await Promise.all([
-      prisma.teamMember.findMany({
-        where: { teamId: bounty.teamId },
-        select: { userId: true },
-      }),
-      prisma.teamFavorite.findMany({
-        where: { teamId: bounty.teamId },
-        select: { userId: true },
-      }),
-    ]);
-    members.forEach((m) => recipients.add(m.userId));
-    favoriters.forEach((f) => recipients.add(f.userId));
-  }
-
-  return [...recipients];
-}
-
-// ─── Reusable select shapes (avoids re-typing & keeps payloads small) ─────────
-const USER_SELECT = { id: true, name: true, nickname: true, avatar: true };
-
-const USER_SELECT_PUBLIC = USER_SELECT;
-
-const USER_SELECT_FULL = {
-  id: true,
-  name: true,
-  nickname: true,
-  email: true,
-  avatar: true,
-  z_address: true,
-  UA_address: true,
-};
-
-// createdByUser / assigneeUser on Bounty (adds role, no address fields)
-const USER_SELECT_WITH_ROLE = {
-  id: true,
-  name: true,
-  nickname: true,
-  email: true,
-  role: true,
-  avatar: true,
-};
-
-// submitterUser / reviewerUser / applicantUser-with-avatar
-const USER_SELECT_BASIC = {
-  id: true,
-  name: true,
-  nickname: true,
-  email: true,
-  avatar: true,
-};
-
-// applicantUser without avatar (a couple of routes only need this much)
-const USER_SELECT_MINIMAL = {
-  id: true,
-  name: true,
-  nickname: true,
-  email: true,
-  discordUsername: true,
-};
-
-// export routes (payments)
-const USER_SELECT_EXPORT = {
-  id: true,
-  name: true,
-  nickname: true,
-  email: true,
-  z_address: true,
-  UA_address: true,
-  ofacVerified: true,
-};
 
 const ASSIGNEE_INCLUDE = {
   assignees: {
@@ -172,13 +72,13 @@ const invalidateWithRetry = async (keys, delayMs = 500) => {
   }, delayMs);
 };
 
-const invalidateBounty = async (bountyId) => {
-  await Promise.all([
-    delCache(`assignees:${bountyId}`),
-    delCache("stats:totals"),
-    bumpVersion("bounties"),
-  ]);
-};
+// const invalidateBounty = async (bountyId) => {
+//   await Promise.all([
+//     delCache(`assignees:${bountyId}`),
+//     delCache("stats:totals"),
+//     bumpVersion("bounties"),
+//   ]);
+// };
 
 const invalidateApplications = async (applicantId, bountyId) => {
   await invalidateWithRetry([
@@ -195,18 +95,6 @@ const invalidateSubmissions = async (bountyId, submittedBy) => {
     ...(submittedBy ? [`submissions:user:${submittedBy}`] : []),
   ]);
 };
-
-const ONBOARDED_ROLES = ["ADMIN", "HUNTER", "TEAM"];
-
-function requireOnboarded(req, res) {
-  if (!ONBOARDED_ROLES.includes(req.user.role)) {
-    res
-      .status(403)
-      .json({ error: "Complete onboarding before performing this action" });
-    return false;
-  }
-  return true;
-}
 
 async function canManageBounty(bounty, user) {
   if (user.role === "ADMIN") return true;
@@ -313,21 +201,6 @@ function getCalendarWeekBounds(date = new Date()) {
   const end = new Date(start);
   end.setUTCDate(start.getUTCDate() + 7);
   return { start, end };
-}
-
-async function getWeeklyBountyQuota(userId) {
-  const isGold = await isGoldStarOrAbove(userId);
-  const limit = isGold
-    ? WEEKLY_BOUNTY_LIMIT_GOLD
-    : WEEKLY_BOUNTY_LIMIT_STANDARD;
-
-  const { start, end } = getCalendarWeekBounds();
-
-  const used = await prisma.bounty.count({
-    where: { createdBy: userId, dateCreated: { gte: start, lt: end } },
-  });
-
-  return { limit, used, remaining: Math.max(0, limit - used), resetsAt: end };
 }
 
 // ─── Create bounty ────────────────────────────────────────────────────────────
@@ -525,235 +398,85 @@ router.get("/", optionalAuthenticate, async (req, res) => {
     const isAuthed = Boolean(req.user);
     const isDev = process.env.NODE_ENV !== "production";
     const isAdmin = req.user?.role === "ADMIN";
-    const userId = req.user?.id;
 
-    const teamId = req.query.teamId || undefined;
-
-    // Default MAIN.
-    // Admins may pass ?chain=TEST or ?chain=ALL.
+    // ------------------------------------------------------------
+    // Chain filter (unchanged)
+    // ------------------------------------------------------------
     const chainParam = String(req.query.chain || "MAIN").toUpperCase();
-
-    // ------------------------------------------------------------
-    // Chain filter
-    // ------------------------------------------------------------
-
     let chainFilter;
 
     if (isDev) {
-      // In development, return all chains.
       chainFilter = {};
     } else if (chainParam === "ALL") {
       if (!isAdmin) {
-        return res.status(403).json({
-          error: "ALL chains requires admin",
-        });
+        return res.status(403).json({ error: "ALL chains requires admin" });
       }
-
       chainFilter = {};
     } else if (chainParam === "TEST") {
       if (!isAdmin) {
-        return res.status(403).json({
-          error: "TEST chain requires admin",
-        });
+        return res.status(403).json({ error: "TEST chain requires admin" });
       }
-
-      chainFilter = {
-        chain: "TEST",
-      };
+      chainFilter = { chain: "TEST" };
     } else if (chainParam === "MAIN") {
-      chainFilter = {
-        chain: "MAIN",
-      };
+      chainFilter = { chain: "MAIN" };
     } else {
-      return res.status(400).json({
-        error: "Invalid chain value",
-      });
+      return res.status(400).json({ error: "Invalid chain value" });
     }
 
     // ------------------------------------------------------------
-    // Private bounty visibility
+    // Visibility — public feed only. Admins see everything (including
+    // private team bounties); everyone else gets isPrivate: false.
+    // Team members/favoriters use GET /api/teams/:teamId/bounties instead.
     // ------------------------------------------------------------
-
-    const visibilityFilter = isAdmin
-      ? {}
-      : {
-          OR: [
-            // Public bounties
-            {
-              isPrivate: false,
-            },
-
-            ...(userId
-              ? [
-                  // Bounty creator
-                  {
-                    isPrivate: true,
-                    createdBy: userId,
-                  },
-
-                  // Team member
-                  {
-                    isPrivate: true,
-                    team: {
-                      members: {
-                        some: {
-                          userId,
-                        },
-                      },
-                    },
-                  },
-
-                  // Team favoriter
-                  {
-                    isPrivate: true,
-                    team: {
-                      favoritedBy: {
-                        some: {
-                          userId,
-                        },
-                      },
-                    },
-                  },
-                ]
-              : []),
-          ],
-        };
-
-    // ------------------------------------------------------------
-    // Combine all filters
-    // ------------------------------------------------------------
-
     const where = {
       ...chainFilter,
-
-      ...(teamId
-        ? {
-            teamId,
-          }
-        : {}),
-
-      ...visibilityFilter,
+      ...(isAdmin ? {} : { isPrivate: false }),
     };
 
     // ------------------------------------------------------------
-    // Snapshot the version BEFORE reading the DB.
-    //
-    // Any mutation that commits after this line will bump the
-    // version and therefore won't affect this request's cache key.
+    // Snapshot version before reading, same as before.
     // ------------------------------------------------------------
-
     const version = await getVersion("bounties");
-
-    // ------------------------------------------------------------
-    // Cache
-    //
-    // Include everything that can change the result:
-    // - version
-    // - auth state
-    // - page
-    // - limit
-    // - chain
-    // - team
-    // - viewer
-    // ------------------------------------------------------------
 
     const cacheKey = `bounties:v${version}:${JSON.stringify({
       page,
       limit,
       chain: chainParam,
-      teamId: teamId ?? null,
-      viewer: isAdmin ? "admin" : (userId ?? "anon"),
-      auth: isAuthed ? "full" : "public",
+      viewer: isAdmin ? "admin" : "public",
     })}`;
 
     const cached = await getCache(cacheKey);
-
-    if (cached) {
-      return res.json(cached);
-    }
-
-    // ------------------------------------------------------------
-    // User selections
-    // ------------------------------------------------------------
+    if (cached) return res.json(cached);
 
     const userSelect = isAuthed ? USER_SELECT : USER_SELECT_PUBLIC;
-
     const createdByUserSelect = isAuthed
       ? USER_SELECT_WITH_ROLE
       : USER_SELECT_PUBLIC;
-
     const assigneeUserSelect = isAuthed ? USER_SELECT_FULL : USER_SELECT_PUBLIC;
-
-    // ------------------------------------------------------------
-    // Query
-    // ------------------------------------------------------------
 
     const [bounties, total] = await Promise.all([
       prisma.bounty.findMany({
         where,
-
         skip: (page - 1) * limit,
         take: limit,
-
-        orderBy: {
-          dateCreated: "desc",
-        },
-
+        orderBy: { dateCreated: "desc" },
         include: {
-          assignees: {
-            include: {
-              user: {
-                select: userSelect,
-              },
-            },
-          },
-
-          assigneeUser: {
-            select: assigneeUserSelect,
-          },
-
-          createdByUser: {
-            select: createdByUserSelect,
-          },
-
-          // Team feature
-          team: {
-            select: {
-              id: true,
-              name: true,
-              logo: true,
-            },
-          },
+          assignees: { include: { user: { select: userSelect } } },
+          assigneeUser: { select: assigneeUserSelect },
+          createdByUser: { select: createdByUserSelect },
+          team: { select: { id: true, name: true, logo: true } },
         },
       }),
-
-      // IMPORTANT:
-      // Count the exact same filtered dataset as findMany().
-      prisma.bounty.count({
-        where,
-      }),
+      prisma.bounty.count({ where }),
     ]);
 
-    // ------------------------------------------------------------
-    // Response
-    // ------------------------------------------------------------
-
-    const result = {
-      data: bounties,
-      total,
-      page,
-      limit,
-    };
+    const result = { data: bounties, total, page, limit };
 
     await setCache(cacheKey, result, TTL.BOUNTY_LIST);
-
     return res.json(result);
   } catch (error) {
     console.error("Failed to fetch bounties:", error);
-
-    return res.status(500).json({
-      error: "Failed to fetch bounties",
-    });
+    return res.status(500).json({ error: "Failed to fetch bounties" });
   }
 });
 
