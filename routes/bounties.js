@@ -232,7 +232,12 @@ router.post("/", authenticate, async (req, res) => {
 
     // Only admins may create a pre-approved bounty. Non-admin callers'
     // isApproved value is ignored outright, mirroring the guard on PUT /:id.
-    const resolvedIsApproved = req.user.role === "ADMIN" ? !!isApproved : false;
+    const resolvedIsApproved =
+      req.user.role === "ADMIN"
+        ? isApproved !== undefined
+          ? !!isApproved
+          : true
+        : false;
 
     if (chain && !["MAIN", "TEST"].includes(chain)) {
       return res.status(400).json({ error: "Invalid chain value" });
@@ -424,17 +429,48 @@ router.get("/", optionalAuthenticate, async (req, res) => {
     }
 
     // ------------------------------------------------------------
-    // Visibility — public feed only. Admins see everything (including
-    // private team bounties); everyone else gets isPrivate: false.
-    // Team members/favoriters use GET /api/teams/:teamId/bounties instead.
+    // Visibility — public bounties, PLUS any private bounty the viewer
+    // actually has access to: one they created, or one belonging to a
+    // team they're a member of or favorite. This is what lets a private
+    // team's members see that team's bounties on their own home feed, not
+    // only on the team's own console page. Admins see everything.
+    //
+    // This filter runs inside the DB query (not a post-fetch JS filter),
+    // so `take: limit` below always returns a correctly-sized page —
+    // pagination was never actually the risk here, even with this OR.
     // ------------------------------------------------------------
+    const userId = req.user?.id;
+
+    const visibilityFilter = isAdmin
+      ? {}
+      : {
+          OR: [
+            { isPrivate: false },
+            ...(userId
+              ? [
+                  { isPrivate: true, createdBy: userId },
+                  {
+                    isPrivate: true,
+                    team: { members: { some: { userId } } },
+                  },
+                  {
+                    isPrivate: true,
+                    team: { favoritedBy: { some: { userId } } },
+                  },
+                ]
+              : []),
+          ],
+        };
+
     const where = {
       ...chainFilter,
-      ...(isAdmin ? {} : { isPrivate: false }),
+      ...visibilityFilter,
     };
 
     // ------------------------------------------------------------
-    // Snapshot version before reading, same as before.
+    // Snapshot version before reading, same as before. Cache key is scoped
+    // per-viewer again (admin / this user's id / anon) since results now
+    // genuinely differ by who's asking, not just by auth level.
     // ------------------------------------------------------------
     const version = await getVersion("bounties");
 
@@ -442,7 +478,7 @@ router.get("/", optionalAuthenticate, async (req, res) => {
       page,
       limit,
       chain: chainParam,
-      viewer: isAdmin ? "admin" : "public",
+      viewer: isAdmin ? "admin" : (userId ?? "anon"),
     })}`;
 
     const cached = await getCache(cacheKey);
