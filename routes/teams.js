@@ -465,6 +465,95 @@ router.get("/public", async (req, res) => {
   }
 });
 
+// ─── Role Conversion (Admin) ─────────────────────────────────────────────────
+
+// Whitelist of allowed role transitions. Anything not listed here is rejected —
+// this is deliberately explicit rather than "any role to any role".
+const ALLOWED_ROLE_TRANSITIONS = {
+  TEAM: ["HUNTER", "ADMIN"],
+  ADMIN: ["TEAM"],
+};
+
+// Convert a user's role along one of the whitelisted paths above.
+//
+// TEAM -> HUNTER is the only transition with a side effect: if the user is an
+// OWNER of a team (i.e. they created it) and is NOT an isRobin user, that team
+// is deleted as part of the conversion. isRobin users keep their team intact.
+// ADMIN <-> TEAM transitions never touch teams.
+router.patch("/convert-role/:userId", authenticate, async (req, res) => {
+  try {
+    if (!requireGlobalAdmin(req, res)) return;
+
+    const { userId } = req.params;
+    const { toRole } = req.body;
+
+    if (!["HUNTER", "TEAM", "ADMIN"].includes(toRole)) {
+      return res.status(400).json({ error: "Invalid target role" });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const fromRole = user.role;
+
+    if (fromRole === toRole) {
+      return res.status(400).json({ error: "User already has that role" });
+    }
+
+    const allowedTargets = ALLOWED_ROLE_TRANSITIONS[fromRole] || [];
+    if (!allowedTargets.includes(toRole)) {
+      return res.status(400).json({
+        error: `Cannot convert a ${fromRole} user to ${toRole}`,
+      });
+    }
+
+    let deletedTeamIds = [];
+
+    // Only TEAM -> HUNTER ever cascades into team deletion.
+    if (fromRole === "TEAM" && toRole === "HUNTER") {
+      const ownedTeams = await prisma.teamMember.findMany({
+        where: { userId, role: "OWNER" },
+        select: { teamId: true },
+      });
+
+      if (!user.isRobin && ownedTeams.length > 0) {
+        deletedTeamIds = ownedTeams.map((m) => m.teamId);
+        for (const teamId of deletedTeamIds) {
+          await deleteTeamCascade(teamId);
+        }
+      }
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { role: toRole },
+    });
+
+    // Bust the cached "all users" list — /api/bounties/users won't
+    // reflect this role change until the TTL expires otherwise.
+    await delCache("users:all");
+
+    for (const teamId of deletedTeamIds) {
+      sendRealtimeUpdate("team_deleted", { id: teamId }, req.user.id);
+    }
+
+    sendRealtimeUpdate("user_updated", updatedUser, req.user.id);
+
+    res.json({
+      success: true,
+      user: updatedUser,
+      fromRole,
+      toRole,
+      deletedTeamIds,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to convert user role" });
+  }
+});
+
 // routes/teams.js — add this route (I put it near the other "Team Activity"
 // routes, below GET /:teamId/submissions works fine, or wherever you like).
 //

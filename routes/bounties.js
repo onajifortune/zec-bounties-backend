@@ -516,6 +516,89 @@ router.get("/", optionalAuthenticate, async (req, res) => {
   }
 });
 
+// GET /api/bounties/unassigned
+// Admin only. Full list of bounties with no team, plus the team list so
+// the frontend can render the picker without a second call.
+router.get("/unassigned", authenticate, isAdmin, async (req, res) => {
+  if (!req.user || req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Admin access required" });
+  }
+
+  try {
+    const [teams, bounties] = await Promise.all([
+      prisma.team.findMany({
+        select: { id: true, name: true, logo: true },
+        orderBy: { name: "asc" },
+      }),
+      prisma.bounty.findMany({
+        where: { teamId: null },
+        select: {
+          id: true,
+          title: true,
+          bountyAmount: true,
+          dateCreated: true,
+        },
+        orderBy: { dateCreated: "desc" },
+      }),
+    ]);
+
+    res.json({ teams, bounties });
+  } catch (err) {
+    console.error("Failed to load unassigned bounties:", err);
+    res.status(500).json({ error: "Failed to load unassigned bounties" });
+  }
+});
+
+// PATCH /api/bounties/unassigned/assign-team
+// Admin only. Body: { teamId, bountyIds }. Moves only the given bounties
+// onto the team — still constrained to teamId: null so a bounty that got
+// assigned elsewhere between page-load and click can't be double-moved.
+// Syncs isPrivate to match the team, same rule used for team-created bounties.
+router.patch(
+  "/unassigned/assign-team",
+  authenticate,
+  isAdmin,
+  async (req, res) => {
+    if (!req.user || req.user.role !== "ADMIN") {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+
+    const { teamId, bountyIds } = req.body;
+    if (!teamId) {
+      return res.status(400).json({ error: "teamId is required" });
+    }
+    if (!Array.isArray(bountyIds) || bountyIds.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "bountyIds must be a non-empty array" });
+    }
+
+    try {
+      const team = await prisma.team.findUnique({
+        where: { id: teamId },
+        select: { id: true, isPrivate: true },
+      });
+      if (!team) {
+        return res.status(400).json({ error: "Team not found" });
+      }
+
+      const result = await prisma.bounty.updateMany({
+        where: { id: { in: bountyIds }, teamId: null },
+        data: { teamId: team.id, isPrivate: team.isPrivate },
+      });
+
+      // Invalidate whatever Redis keys your bounty list route reads from —
+      // same as your other routes that touch cached bounty payload fields.
+      // e.g.: await invalidateBountyListCache();
+
+      res.json({ movedCount: result.count });
+    } catch (err) {
+      console.error("Failed to assign bounties to team:", err);
+      res.status(500).json({ error: "Failed to move bounties" });
+    }
+  },
+);
+
 // ─── Add / replace assignees (Admin only) ─────────────────────────────────────
 // FIX: Replaced N individual prisma.bountyAssignee.create calls with a single
 //      createMany, cutting round-trips from O(n) → O(1).
