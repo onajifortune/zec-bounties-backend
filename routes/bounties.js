@@ -531,7 +531,7 @@ router.get("/unassigned", authenticate, isAdmin, async (req, res) => {
         orderBy: { name: "asc" },
       }),
       prisma.bounty.findMany({
-        where: { teamId: null },
+        where: { teamId: null, createdByUser: { role: "ADMIN" } },
         select: {
           id: true,
           title: true,
@@ -583,7 +583,11 @@ router.patch(
       }
 
       const result = await prisma.bounty.updateMany({
-        where: { id: { in: bountyIds }, teamId: null },
+        where: {
+          id: { in: bountyIds },
+          teamId: null,
+          createdByUser: { role: "ADMIN" },
+        },
         data: { teamId: team.id, isPrivate: team.isPrivate },
       });
 
