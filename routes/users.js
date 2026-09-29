@@ -2,6 +2,7 @@ const express = require("express");
 const prisma = require("../prisma/client");
 const { authenticate } = require("../middleware/auth");
 const { delCache } = require("../utils/cache");
+const { userIdentityWhere } = require("../utils/userIdentity");
 
 const router = express.Router();
 
@@ -143,6 +144,38 @@ async function loadStats(userId) {
   ]);
   return { MAIN, TEST };
 }
+
+/**
+ * GET /api/users/search?q=
+ * Admin typeahead. Must stay above /:idOrNickname/public.
+ */
+router.get("/search", authenticate, async (req, res) => {
+  try {
+    if (req.user?.role !== "ADMIN") {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    const q = String(req.query.q || "").trim();
+    const where = userIdentityWhere(q);
+    if (!where) return res.json({ data: [] });
+
+    const data = await prisma.user.findMany({
+      where,
+      take: 20,
+      orderBy: [{ nickname: "asc" }, { name: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        nickname: true,
+        avatar: true,
+        role: true,
+      },
+    });
+    return res.json({ data });
+  } catch (error) {
+    console.error("Failed to search users:", error);
+    return res.status(500).json({ error: "Failed to search users" });
+  }
+});
 
 /**
  * GET /api/users/:idOrNickname/public
