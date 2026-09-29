@@ -6,6 +6,7 @@ const {
   authenticate,
   isAdmin,
   optionalAuthenticate,
+  signSessionToken,
 } = require("../middleware/auth");
 const { sendRealtimeUpdate } = require("../middleware/websocket");
 const {
@@ -1666,7 +1667,8 @@ router.patch("/switch-role", authenticate, async (req, res) => {
       },
     });
     await delCache("users:all");
-    res.json({ user: updated });
+    const token = signSessionToken(updated);
+    res.json({ user: updated, token });
   } catch (error) {
     console.error("Failed to switch role:", error);
     res.status(500).json({ error: "Failed to switch role" });

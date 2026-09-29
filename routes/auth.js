@@ -3,7 +3,12 @@ const axios = require("axios");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const prisma = require("../prisma/client");
-const { authenticate, isAdmin } = require("../middleware/auth");
+const {
+  authenticate,
+  isAdmin,
+  signSessionToken,
+  loadAuthUser,
+} = require("../middleware/auth");
 const { verifyZaddress, verifyUaddress } = require("../helpers/db-query.js");
 const {
   getLatestZcashParams,
@@ -127,16 +132,7 @@ router.get("/github/callback", async (req, res) => {
       });
     }
 
-    const token = jwt.sign(
-      {
-        id: user.id,
-        role: user.role,
-      },
-      SECRET,
-      {
-        expiresIn: "7d",
-      },
-    );
+    const token = signSessionToken(user);
 
     res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
   } catch (error) {
@@ -274,7 +270,7 @@ router.delete("/discord", authenticate, async (req, res) => {
   }
 });
 
-router.get("/verify", (req, res) => {
+router.get("/verify", async (req, res) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
@@ -285,7 +281,11 @@ router.get("/verify", (req, res) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    return res.json({ user: decoded });
+    const user = await loadAuthUser(decoded.id);
+    if (!user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+    return res.json({ user });
   } catch (err) {
     return res.status(401).json({ error: "Invalid or expired token" });
   }
@@ -718,14 +718,7 @@ router.patch("/select-role", authenticate, async (req, res) => {
 
     sendRealtimeUpdate("user_updated", updated, req.user.id);
 
-    const token = jwt.sign(
-      {
-        id: updated.id,
-        role: updated.role,
-      },
-      SECRET,
-      { expiresIn: "7d" },
-    );
+    const token = signSessionToken(updated);
 
     res.json({ user: updated, token });
   } catch (error) {
