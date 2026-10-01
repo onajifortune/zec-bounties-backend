@@ -312,6 +312,53 @@ async function deleteTeamCascade(teamId) {
     .catch(() => {});
 }
 
+function findUnifiedAddress(value) {
+  if (typeof value === "string") {
+    return /^utest1[a-z0-9]+$/i.test(value) || /^u1[a-z0-9]+$/i.test(value)
+      ? value
+      : null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findUnifiedAddress(item);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) {
+      const found = findUnifiedAddress(item);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// Reads the team wallet's UA, cached because this route is public-facing and
+// should not hit the wallet on every page view. Returns null if the team has
+// no wallet or the wallet can't be read.
+async function getTeamDonationAddress(teamId) {
+  const cacheKey = `team-donation-address:${teamId}`;
+
+  try {
+    const cached = await getCache(cacheKey);
+    if (cached) return cached.address;
+
+    const wallet = await prisma.teamWallet.findUnique({ where: { teamId } });
+    if (!wallet) return null;
+
+    const params = await buildTeamParams(teamId, wallet);
+    const addresses = await executeZingoCliAddresses("addresses", params);
+    const address = findUnifiedAddress(addresses);
+
+    if (address) await setCache(cacheKey, { address }, TTL.BOUNTY_LIST);
+    return address;
+  } catch (err) {
+    console.error("Failed to read team donation address:", err);
+    return null;
+  }
+}
+
 // ─── Team CRUD ───────────────────────────────────────────────────────────────
 
 router.post("/", authenticate, async (req, res) => {
@@ -1249,6 +1296,62 @@ router.patch("/convert-to-hunter/:userId", authenticate, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to convert user to hunter" });
+  }
+});
+
+router.get("/:teamId/overview", optionalAuthenticate, async (req, res) => {
+  try {
+    const { teamId } = req.params;
+
+    const team = await prisma.team.findUnique({
+      where: { id: teamId },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        logo: true,
+        banner: true,
+        twitterUrl: true,
+        discordUrl: true,
+        additionalLinks: true,
+        isVerified: true,
+        createdAt: true,
+        _count: { select: { members: true, favoritedBy: true } },
+      },
+    });
+
+    if (!team) return res.status(404).json({ error: "Team not found" });
+
+    // Verified teams are public (same as /public). Unverified teams are only
+    // visible to a signed-in member or admin.
+    if (!team.isVerified && req.user?.role !== "ADMIN") {
+      const member = req.user ? await getTeamMember(teamId, req.user.id) : null;
+      if (!member) return res.status(404).json({ error: "Team not found" });
+    }
+
+    // The team's Unified Address lives in its shared Zcash wallet (Team has no
+    // address column), so ask the wallet. Never let a wallet problem break the
+    // page — a failure just means no donation section.
+    const donationAddress = await getTeamDonationAddress(teamId);
+
+    res.json({
+      id: team.id,
+      name: team.name,
+      description: team.description,
+      logo: toMediaUrl(team.logo),
+      banner: toMediaUrl(team.banner),
+      twitterUrl: team.twitterUrl,
+      discordUrl: team.discordUrl,
+      additionalLinks: team.additionalLinks ?? [],
+      isVerified: team.isVerified,
+      createdAt: team.createdAt,
+      memberCount: team._count.members,
+      communityCount: team._count.favoritedBy,
+      donationAddress,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch team overview" });
   }
 });
 
