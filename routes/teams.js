@@ -23,6 +23,7 @@ const { getWalletDataDir } = require("../helpers/zcash/zcashHelper.js");
 const executeZingoCliTransactions = require("../utils/zingo/zingoLibTransactions");
 const executeZingoCliRescan = require("../utils/zingo/zingoLibRescan");
 const executeZingoCliSync = require("../utils/zingo/zingoLibSync");
+const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo");
 const { randomUUID } = require("crypto");
 const { uploadToPinata, pinataUrl } = require("../utils/ipfs/pinata");
 const { REQUIRED_TEAM_VERIFICATIONS } = require("../utils/constants");
@@ -635,6 +636,8 @@ router.get("/:teamId/bounties", optionalAuthenticate, async (req, res) => {
 
     const userId = req.user?.id;
     const isAdmin = req.user?.role === "ADMIN";
+    const membership = userId ? await getTeamMember(teamId, userId) : null;
+    const canSeeAllChains = isAdmin || !!membership;
 
     // ------------------------------------------------------------
     // Access check, resolved once, up front. No access → empty page,
@@ -645,14 +648,13 @@ router.get("/:teamId/bounties", optionalAuthenticate, async (req, res) => {
         return res.json({ data: [], total: 0, page, limit });
       }
 
-      const [member, favorite] = await Promise.all([
-        getTeamMember(teamId, userId),
-        prisma.teamFavorite.findUnique({
-          where: { userId_teamId: { userId, teamId } },
-        }),
-      ]);
+      const favorite = membership
+        ? null
+        : await prisma.teamFavorite.findUnique({
+            where: { userId_teamId: { userId, teamId } },
+          });
 
-      if (!member && !favorite) {
+      if (!membership && !favorite) {
         return res.json({ data: [], total: 0, page, limit });
       }
     }
@@ -663,19 +665,21 @@ router.get("/:teamId/bounties", optionalAuthenticate, async (req, res) => {
     // ------------------------------------------------------------
     // Chain filter — same rules as the public feed.
     // ------------------------------------------------------------
-    const chainParam = String(req.query.chain || "MAIN").toUpperCase();
+    let chainParam = String(req.query.chain || "MAIN").toUpperCase();
+    // Viewers who aren't members/admins (e.g. public visitors) just get MAIN
+    // instead of a 403 when the client asks for ALL.
+    if (chainParam === "ALL" && !canSeeAllChains) chainParam = "MAIN";
     let chainFilter;
 
     if (isDev) {
       chainFilter = {};
     } else if (chainParam === "ALL") {
-      if (!isAdmin) {
-        return res.status(403).json({ error: "ALL chains requires admin" });
-      }
       chainFilter = {};
     } else if (chainParam === "TEST") {
-      if (!isAdmin) {
-        return res.status(403).json({ error: "TEST chain requires admin" });
+      if (!canSeeAllChains) {
+        return res
+          .status(403)
+          .json({ error: "TEST chain requires team membership" });
       }
       chainFilter = { chain: "TEST" };
     } else if (chainParam === "MAIN") {
@@ -2257,6 +2261,31 @@ router.get("/:teamId/wallet/sync-status", authenticate, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch team wallet sync status" });
   }
 });
+
+// Wallet recovery info (seed, UFVK, UIVK, birthday) — team OWNER/ADMIN or
+// global admin. Deliberately NOT pushed over WebSocket and never cached.
+router.get("/:teamId/wallet/recovery", authenticate, async (req, res) => {
+  try {
+    const { teamId } = req.params;
+    if (!(await requireTeamAdmin(teamId, req, res))) return;
+
+    const wallet = await prisma.teamWallet.findUnique({ where: { teamId } });
+    if (!wallet) {
+      return res.status(404).json({ error: "No wallet found for this team" });
+    }
+
+    const params = await buildTeamParams(teamId, wallet);
+    const data = await executeZingoCliRecoveryInfo("recovery_info", params);
+
+    res.set("Cache-Control", "no-store");
+    res.json({ data });
+  } catch (err) {
+    console.error("Team recovery fetch error:", err);
+    res.status(500).json({ error: "Failed to fetch recovery info" });
+  }
+});
+
+// Send payment from team wallet
 
 // Send payment from team wallet
 router.post("/:teamId/wallet/pay", authenticate, async (req, res) => {

@@ -1,6 +1,11 @@
 const { spawn } = require("child_process");
 const { existsSync } = require("fs");
 
+// Timeouts in ms. Override via env vars without touching code.
+const DEFAULT_TIMEOUT = Number(process.env.ZINGO_TIMEOUT_MS) || 60_000; // 1 min
+const SYNC_TIMEOUT = Number(process.env.ZINGO_SYNC_TIMEOUT_MS) || 10 * 60_000; // 10 min
+const SEND_TIMEOUT = Number(process.env.ZINGO_SEND_TIMEOUT_MS) || 2 * 60_000; // 2 min
+
 function extractJson(text) {
   let start = text.indexOf("{");
   if (start === -1) return null;
@@ -195,7 +200,7 @@ class ZingoProcess {
     });
   }
 
-  quit(command, timeout = 10000) {
+  quit(command, timeout = DEFAULT_TIMEOUT) {
     return new Promise((resolve, reject) => {
       let buffer = "";
       let timer;
@@ -244,7 +249,7 @@ class ZingoProcess {
     });
   }
 
-  rescan(command, timeout = 10000) {
+  rescan(command, timeout = SYNC_TIMEOUT) {
     return new Promise((resolve, reject) => {
       let buffer = "";
       let resolved = false;
@@ -287,7 +292,7 @@ class ZingoProcess {
     });
   }
 
-  sync(command, timeout = 10000) {
+  sync(command, timeout = SYNC_TIMEOUT) {
     return new Promise((resolve, reject) => {
       const startBufferLen = this.buffer.length;
 
@@ -333,7 +338,7 @@ class ZingoProcess {
     });
   }
 
-  addresses(command, timeout = 10000) {
+  addresses(command, timeout = DEFAULT_TIMEOUT) {
     return new Promise((resolve, reject) => {
       const startBufferLen = this.buffer.length;
 
@@ -380,7 +385,7 @@ class ZingoProcess {
     });
   }
 
-  balance(command, timeout = 10000) {
+  balance(command, timeout = DEFAULT_TIMEOUT) {
     return new Promise((resolve, reject) => {
       let buffer = "";
 
@@ -418,7 +423,7 @@ class ZingoProcess {
     });
   }
 
-  parseAddress(zaddress, timeout = 10000) {
+  parseAddress(zaddress, timeout = DEFAULT_TIMEOUT) {
     return new Promise((resolve, reject) => {
       if (!zaddress) {
         reject(new Error("No zaddress provided"));
@@ -473,7 +478,7 @@ class ZingoProcess {
     });
   }
 
-  quicksend(recipients, timeout = 10000) {
+  quicksend(recipients, timeout = SEND_TIMEOUT) {
     return new Promise((resolve, reject) => {
       let buffer = "";
 
@@ -538,7 +543,7 @@ class ZingoProcess {
     });
   }
 
-  transactions(timeout = 10000) {
+  transactions(timeout = DEFAULT_TIMEOUT) {
     const command = "transactions";
     return new Promise((resolve, reject) => {
       let buffer = "";
@@ -592,7 +597,7 @@ class ZingoProcess {
     });
   }
 
-  recovery_info(command = "recovery_info", timeout = 10000) {
+  recovery_info(command = "recovery_info", timeout = DEFAULT_TIMEOUT) {
     return new Promise((resolve, reject) => {
       let buffer = "";
 
@@ -634,7 +639,7 @@ class ZingoProcess {
     });
   }
 
-  info(command = "info", timeout = 10000) {
+  info(command = "info", timeout = DEFAULT_TIMEOUT) {
     return new Promise((resolve, reject) => {
       let buffer = "";
 
