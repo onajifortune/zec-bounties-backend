@@ -8,7 +8,7 @@ const {
   optionalAuthenticate,
   signSessionToken,
 } = require("../middleware/auth");
-const { sendRealtimeUpdate } = require("../middleware/websocket");
+const { sendRealtimeUpdate, sendToUser } = require("../middleware/websocket");
 const {
   getCache,
   setCache,
@@ -45,6 +45,7 @@ const {
   ONBOARDED_ROLES,
   requireOnboarded,
   getWeeklyBountyQuota,
+  requireTaskCreation,
 } = require("../utils/bountyHelpers");
 const {
   userIdentityWhere,
@@ -216,7 +217,7 @@ function getCalendarWeekBounds(date = new Date()) {
 }
 
 // ─── Create bounty ────────────────────────────────────────────────────────────
-router.post("/", authenticate, async (req, res) => {
+router.post("/", authenticate, requireTaskCreation, async (req, res) => {
   try {
     if (!requireOnboarded(req, res)) return;
 
@@ -920,7 +921,7 @@ router.patch("/:id/approve", authenticate, isAdmin, async (req, res) => {
   try {
     const updated = await prisma.bounty.update({
       where: { id: req.params.id },
-      data: { iApproved: true },
+      data: { isApproved: true },
     });
     sendRealtimeUpdate("bounty_approved", updated, req.user.id);
     await invalidateBounty(req.params.id);
@@ -1625,6 +1626,7 @@ router.get("/users/full", authenticate, isAdmin, async (req, res) => {
         emailNotifications: true,
         pushNotifications: true,
         isRobin: true,
+        canCreateTasks: true,
       },
     });
     await setCache(cacheKey, users, TTL.USERS);
@@ -1633,6 +1635,39 @@ router.get("/users/full", authenticate, isAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+router.patch(
+  "/users/:id/task-access",
+  authenticate,
+  isAdmin,
+  async (req, res) => {
+    try {
+      const { canCreateTasks } = req.body;
+      if (typeof canCreateTasks !== "boolean") {
+        return res
+          .status(400)
+          .json({ error: "canCreateTasks must be boolean" });
+      }
+      const user = await prisma.user.update({
+        where: { id: req.params.id },
+        data: { canCreateTasks, blockedAt: canCreateTasks ? null : new Date() },
+        select: { id: true, canCreateTasks: true },
+      });
+      await delCache("users:all");
+      sendToUser(user.id, "user_task_access_changed", {
+        userId: user.id,
+        canCreateTasks: user.canCreateTasks,
+      });
+      res.json(user);
+    } catch (err) {
+      if (err.code === "P2025") {
+        return res.status(404).json({ error: "User not found" });
+      }
+      console.error("Failed to update task access:", err);
+      res.status(500).json({ error: "Failed to update task access" });
+    }
+  },
+);
 
 // ─── Switch role ──────────────────────────────────────────────────────────────
 router.patch("/switch-role", authenticate, async (req, res) => {

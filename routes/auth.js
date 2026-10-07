@@ -13,6 +13,7 @@ const { verifyZaddress, verifyUaddress } = require("../helpers/db-query.js");
 const {
   getLatestZcashParams,
   getSystemWalletParams,
+  getWalletDataDir,
 } = require("../helpers/zcash/zcashHelper.js");
 const sendMail = require("../utils/sendMail");
 const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo");
@@ -317,6 +318,7 @@ router.get("/me", async (req, res) => {
         isRobin: true,
         emailNotifications: true,
         discordUsername: true,
+        canCreateTasks: true,
       },
     });
 
@@ -355,6 +357,7 @@ router.patch("/update-email-notifications", authenticate, async (req, res) => {
         z_address: true,
         UA_address: true,
         emailNotifications: true,
+        canCreateTasks: true,
       },
     });
 
