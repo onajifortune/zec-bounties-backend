@@ -1354,6 +1354,7 @@ router.patch(
                 }),
             },
             include: {
+              ...ASSIGNEE_INCLUDE,
               createdByUser: { select: USER_SELECT_WITH_ROLE },
               assigneeUser: { select: USER_SELECT_WITH_ROLE },
               team: { select: { id: true, name: true, logo: true } },
@@ -1455,6 +1456,8 @@ router.patch("/submissions/:submissionId", authenticate, async (req, res) => {
           where: { id: submission.bountyId },
           data: { status: "IN_REVIEW" },
           include: {
+            ...ASSIGNEE_INCLUDE,
+            team: { select: { id: true, name: true, logo: true } },
             createdByUser: { select: USER_SELECT_WITH_ROLE },
             assigneeUser: { select: USER_SELECT_WITH_ROLE },
           },
@@ -1564,6 +1567,9 @@ router.patch(
         }
       });
 
+      await invalidateSubmissions(keptSubmission.bountyId);
+      await invalidateBounty(keptSubmission.bountyId);
+
       sendRealtimeUpdate(
         "submissions_rejected_others",
         {
@@ -1579,9 +1585,6 @@ router.patch(
         { bountyId: keptSubmission.bountyId },
         req.user.id,
       );
-
-      await invalidateSubmissions(keptSubmission.bountyId);
-      await invalidateBounty(keptSubmission.bountyId);
 
       res.json({
         message: "Other submissions rejected",
@@ -2554,6 +2557,8 @@ router.put("/:id", authenticate, async (req, res) => {
       },
       include: {
         assignees: {
+          assigneeUser: { select: USER_SELECT_FULL },
+          createdByUser: { select: USER_SELECT_WITH_ROLE },
           include: { user: { select: USER_SELECT_FULL } },
         },
         team: { select: { id: true, name: true, logo: true } },
