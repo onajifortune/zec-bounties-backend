@@ -84,6 +84,7 @@ const optionalAuthenticate = async (req, res, next) => {
   }
   next();
 };
+
 module.exports = {
   authenticate,
   isAdmin,
