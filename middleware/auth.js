@@ -49,6 +49,7 @@ async function authenticate(req, res, next) {
 function isAdmin(req, res, next) {
   if (req.user.role !== "ADMIN")
     return res.status(403).json({ error: "Admins only" });
+  next();
 }
 
 const optionalAuthenticate = async (req, res, next) => {
