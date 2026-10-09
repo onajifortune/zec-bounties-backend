@@ -406,6 +406,7 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
     res.json({
       success: true,
       result: txResult,
+      txids: sendResult.txids || (txid ? [txid] : []),
       batchKey,
       paidCount: payableIds.length,
       skipped,

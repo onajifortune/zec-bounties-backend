@@ -2592,6 +2592,7 @@ router.post(
       res.json({
         success: true,
         result: txResult,
+        txids: sendResult.txids || (txid ? [txid] : []),
         batchKey,
         paidCount: payableIds.length,
         skipped,
