@@ -10,15 +10,6 @@ const {
 } = require("../middleware/auth");
 const { sendRealtimeUpdate, sendToUser } = require("../middleware/websocket");
 const {
-  clearBountyChat,
-  isTransitionToDone,
-} = require("../helpers/clearBountyChat");
-function notifyBountyChatCleared(bountyId, userIds) {
-  userIds.forEach((userId) => {
-    sendToUser(userId, "bounty_chat_cleared", { bountyId });
-  });
-}
-const {
   getCache,
   setCache,
   delCache,
@@ -1034,49 +1025,43 @@ router.patch("/:id/status", authenticate, async (req, res) => {
       }
     }
 
-    const { updated, clearedUserIds, activityRow } = await prisma.$transaction(
-      async (tx) => {
-        const updated = await tx.bounty.update({
-          where: { id: bountyId },
-          data: {
-            status,
-            isApproved,
-            ...(status === "DONE" && {
-              assignee: paymentAssigneeId,
-              completedAt: new Date(),
-            }),
-            ...(status !== "DONE" &&
-              bounty.status === "DONE" && { completedAt: null }),
+    const { updated, activityRow } = await prisma.$transaction(async (tx) => {
+      const updated = await tx.bounty.update({
+        where: { id: bountyId },
+        data: {
+          status,
+          isApproved,
+          ...(status === "DONE" && {
+            assignee: paymentAssigneeId,
+            completedAt: new Date(),
+          }),
+          ...(status !== "DONE" &&
+            bounty.status === "DONE" && { completedAt: null }),
+        },
+        include: {
+          ...ASSIGNEE_INCLUDE,
+          assigneeUser: { select: USER_SELECT_FULL },
+          createdByUser: {
+            select: USER_SELECT_WITH_ROLE,
           },
-          include: {
-            ...ASSIGNEE_INCLUDE,
-            assigneeUser: { select: USER_SELECT_FULL },
-            createdByUser: {
-              select: USER_SELECT_WITH_ROLE,
-            },
-            team: { select: { id: true, name: true, logo: true } },
-          },
-        });
-        const shouldClearChat = isTransitionToDone(bounty.status, status);
-        const activityRow = await logActivity(tx, {
-          bountyId,
-          actorId: req.user.id,
-          type: "STATUS_CHANGED",
-          meta: {
-            from: bounty.status,
-            to: status,
-            ...(winnerId && { winnerId }),
-          },
-        });
+          team: { select: { id: true, name: true, logo: true } },
+        },
+      });
 
-        const clearedUserIds = shouldClearChat
-          ? await clearBountyChat(tx, bountyId)
-          : [];
-        return { updated, clearedUserIds, activityRow };
-      },
-    );
+      const activityRow = await logActivity(tx, {
+        bountyId,
+        actorId: req.user.id,
+        type: "STATUS_CHANGED",
+        meta: {
+          from: bounty.status,
+          to: status,
+          ...(winnerId && { winnerId }),
+        },
+      });
 
-    notifyBountyChatCleared(bountyId, clearedUserIds);
+      return { updated, activityRow };
+    });
+
     sendRealtimeUpdate("bounty_status_changed", updated, req.user.id);
     await invalidateBounty(bountyId);
     res.json(updated);
@@ -1388,7 +1373,7 @@ router.patch(
         if (!approvedExists) newBountyStatus = "IN_PROGRESS";
       }
 
-      const [updatedSubmission, updatedBounty, clearedUserIds, activityRow] =
+      const [updatedSubmission, updatedBounty, activityRow] =
         await prisma.$transaction(async (tx) => {
           const updSub = await tx.workSubmission.update({
             where: { id: submissionId },
@@ -1450,17 +1435,9 @@ router.patch(
             },
           });
 
-          const clearedUserIds = isTransitionToDone(
-            submission.bounty.status,
-            newBountyStatus,
-          )
-            ? await clearBountyChat(tx, submission.bounty.id)
-            : [];
-
-          return [updSub, updBounty, clearedUserIds, activityRow];
+          return [updSub, updBounty, activityRow];
         });
 
-      notifyBountyChatCleared(submission.bounty.id, clearedUserIds);
       sendRealtimeUpdate("submission_reviewed", updatedSubmission, req.user.id);
       sendRealtimeUpdate("bounty_updated", updatedBounty, req.user.id);
       await invalidateSubmissions(submission.bounty.id, submission.submittedBy);
