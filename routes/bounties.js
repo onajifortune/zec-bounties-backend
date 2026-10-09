@@ -10,6 +10,15 @@ const {
 } = require("../middleware/auth");
 const { sendRealtimeUpdate, sendToUser } = require("../middleware/websocket");
 const {
+  clearBountyChat,
+  isTransitionToDone,
+} = require("../helpers/clearBountyChat");
+function notifyBountyChatCleared(bountyId, userIds) {
+  userIds.forEach((userId) => {
+    sendToUser(userId, "bounty_chat_cleared", { bountyId });
+  });
+}
+const {
   getCache,
   setCache,
   delCache,
@@ -919,8 +928,9 @@ router.put(
 // FIX: id was cast to Number() but schema uses cuid strings — removed the cast.
 router.patch("/:id/approve", authenticate, isAdmin, async (req, res) => {
   try {
+    const bountyId = req.params.id;
     const updated = await prisma.bounty.update({
-      where: { id: req.params.id },
+      where: { id: bountyId },
       data: { isApproved: true },
     });
     sendRealtimeUpdate("bounty_approved", updated, req.user.id);
@@ -945,6 +955,7 @@ router.patch("/:id/status", authenticate, async (req, res) => {
       select: {
         id: true,
         status: true,
+        isApproved: true,
         assignee: true,
         createdBy: true,
         teamId: true,
@@ -984,28 +995,38 @@ router.patch("/:id/status", authenticate, async (req, res) => {
       }
     }
 
-    const updated = await prisma.bounty.update({
-      where: { id: bountyId },
-      data: {
-        status,
-        isApproved,
-        ...(status === "DONE" && {
-          assignee: paymentAssigneeId,
-          completedAt: new Date(),
-        }),
-        ...(status !== "DONE" &&
-          bounty.status === "DONE" && { completedAt: null }),
+    const { updated, clearedUserIds } = await prisma.$transaction(
+      async (tx) => {
+        const updated = await tx.bounty.update({
+          where: { id: bountyId },
+          data: {
+            status,
+            isApproved,
+            ...(status === "DONE" && {
+              assignee: paymentAssigneeId,
+              completedAt: new Date(),
+            }),
+            ...(status !== "DONE" &&
+              bounty.status === "DONE" && { completedAt: null }),
+          },
+          include: {
+            ...ASSIGNEE_INCLUDE,
+            assigneeUser: { select: USER_SELECT_FULL },
+            createdByUser: {
+              select: USER_SELECT_WITH_ROLE,
+            },
+            team: { select: { id: true, name: true, logo: true } },
+          },
+        });
+        const shouldClearChat = isTransitionToDone(bounty.status, status);
+        const clearedUserIds = shouldClearChat
+          ? await clearBountyChat(tx, bountyId)
+          : [];
+        return { updated, clearedUserIds };
       },
-      include: {
-        ...ASSIGNEE_INCLUDE,
-        assigneeUser: { select: USER_SELECT_FULL },
-        createdByUser: {
-          select: USER_SELECT_WITH_ROLE,
-        },
-        team: { select: { id: true, name: true, logo: true } },
-      },
-    });
+    );
 
+    notifyBountyChatCleared(bountyId, clearedUserIds);
     sendRealtimeUpdate("bounty_status_changed", updated, req.user.id);
     await invalidateBounty(bountyId);
     res.json(updated);
@@ -1311,8 +1332,8 @@ router.patch(
         if (!approvedExists) newBountyStatus = "IN_PROGRESS";
       }
 
-      const [updatedSubmission, updatedBounty] = await prisma.$transaction(
-        async (tx) => {
+      const [updatedSubmission, updatedBounty, clearedUserIds] =
+        await prisma.$transaction(async (tx) => {
           const updSub = await tx.workSubmission.update({
             where: { id: submissionId },
             data: {
@@ -1361,10 +1382,17 @@ router.patch(
             },
           });
 
-          return [updSub, updBounty];
-        },
-      );
+          const clearedUserIds = isTransitionToDone(
+            submission.bounty.status,
+            newBountyStatus,
+          )
+            ? await clearBountyChat(tx, submission.bounty.id)
+            : [];
 
+          return [updSub, updBounty, clearedUserIds];
+        });
+
+      notifyBountyChatCleared(submission.bounty.id, clearedUserIds);
       sendRealtimeUpdate("submission_reviewed", updatedSubmission, req.user.id);
       sendRealtimeUpdate("bounty_updated", updatedBounty, req.user.id);
       await invalidateSubmissions(submission.bounty.id, submission.submittedBy);
@@ -2521,6 +2549,7 @@ router.put("/:id", authenticate, async (req, res) => {
         bountyAmount: true,
         timeToComplete: true,
         status: true,
+        isApproved: true,
       },
     });
     if (!before) return res.status(404).json({ error: "Bounty not found" });
