@@ -26,6 +26,7 @@ function staffBountyRow(bounty, relation, applicationStatus) {
     isPrivate: bounty.isPrivate,
     isPaid: bounty.isPaid,
     isApproved: bounty.isApproved,
+    exportedAt: bounty.exportedAt || null,
     dateCreated: bounty.dateCreated,
     completedAt: bounty.completedAt,
     paidAt: bounty.paidAt,
@@ -121,12 +122,34 @@ function buildStaffView(
 
   const openPage = pageStaffRows(open, offsets.openOffset);
   const historyPage = pageStaffRows(history, offsets.historyOffset);
+  const all = [...open, ...history];
+  const statusCounts = {
+    TO_DO: 0,
+    IN_PROGRESS: 0,
+    IN_REVIEW: 0,
+    DONE: 0,
+    CANCELLED: 0,
+  };
+  let zecEarned = 0;
+  for (const row of all) {
+    if (statusCounts[row.status] != null) statusCounts[row.status] += 1;
+    if (
+      row.status === "DONE" &&
+      (row.isPaid || row.exportedAt) &&
+      row.relations.includes("assigned")
+    ) {
+      zecEarned += Number(row.bountyAmount) || 0;
+    }
+  }
   return {
     userId: user.id,
     displayName: user.nickname || user.name,
     joinedAt: user.createdAt,
     chain,
     limit: STAFF_PAGE_LIMIT,
+    bountyCount: all.length,
+    zecEarned,
+    statusCounts,
     open: openPage.rows,
     openTotal: openPage.total,
     openNextOffset: openPage.nextOffset,
