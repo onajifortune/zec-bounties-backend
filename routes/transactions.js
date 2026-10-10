@@ -11,15 +11,12 @@ const {
   storeTransactions,
 } = require("../helpers/db-query.js");
 const { initZcashOnce } = require("../zcash/init");
-const executeZingoCli = require("../utils/zingo/zingoLib.js");
 const executeZingoCliTransactions = require("../utils/zingo/zingoLibTransactions.js");
-const executeZingoCheckBalance = require("../utils/zingo/zingoLibCheckBalance.js");
 const executeZingoCliAddresses = require("../utils/zingo/zingoLibAddresses.js");
 const {
   getLatestZcashParams,
   getDefaultZcashParams,
 } = require("../helpers/zcash/zcashHelper.js");
-const executeZingoParseAddress = require("../utils/zingo/zingoLibParseAddress.js");
 const executeZingoCliSync = require("../utils/zingo/zingoLibSync.js");
 const executeZingoCliRescan = require("../utils/zingo/zingoLibRescan.js");
 const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo.js");

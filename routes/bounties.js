@@ -65,6 +65,19 @@ const ASSIGNEE_INCLUDE = {
   },
 };
 
+const TARGET_REPOS = new Set([
+  "namada",
+  "zechub",
+  "zechub-wiki",
+  "zec-bounties",
+]);
+
+function resolveTargetRepo(value) {
+  if (value == null || value === "") return null;
+  if (!TARGET_REPOS.has(value)) return undefined;
+  return value;
+}
+
 // Invalidates now, then invalidates again shortly after — this closes the
 // race window where a concurrent GET reads stale DB data and writes it to
 // cache *after* our invalidation already ran, silently re-poisoning it.
@@ -242,7 +255,13 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
       categoryId,
       chain,
       teamId,
+      targetRepo,
     } = req.body;
+
+    const resolvedTargetRepo = resolveTargetRepo(targetRepo);
+    if (resolvedTargetRepo === undefined) {
+      return res.status(400).json({ error: "Invalid targetRepo" });
+    }
 
     // Only admins may create a pre-approved bounty. Non-admin callers'
     // isApproved value is ignored outright, mirroring the guard on PUT /:id.
@@ -307,6 +326,7 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
         categoryId,
         ...(chain && { chain }),
         ...(teamId && { teamId }),
+        ...(resolvedTargetRepo && { targetRepo: resolvedTargetRepo }),
         // Denormalized from the team at creation time — a bounty's privacy
         // always tracks its team's current privacy setting.
         isPrivate: team?.isPrivate ?? false,
@@ -2661,6 +2681,16 @@ router.put("/:id", authenticate, async (req, res) => {
       }
     }
 
+    if (
+      req.body.targetRepo !== undefined &&
+      req.body.targetRepo !== null &&
+      req.body.targetRepo !== "" &&
+      resolveTargetRepo(req.body.targetRepo) === undefined
+    ) {
+      return res.status(400).json({ error: "Invalid targetRepo" });
+    }
+    if (req.body.targetRepo === "") req.body.targetRepo = null;
+
     const updated = await prisma.bounty.update({
       where: { id: req.params.id },
       data: {
@@ -2677,6 +2707,9 @@ router.put("/:id", authenticate, async (req, res) => {
         ...(req.body.teamId !== undefined && {
           teamId: req.body.teamId || null,
           isPrivate: resolvedIsPrivate,
+        }),
+        ...(req.body.targetRepo !== undefined && {
+          targetRepo: req.body.targetRepo,
         }),
       },
       include: {

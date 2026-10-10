@@ -99,6 +99,7 @@ model Bounty {
   exportedAt        DateTime?
   exportedBy        String?
   discordThreadId  String?
+  targetRepo       String?
   messages          BountyChat[]
   notifications     InAppNotification[]
   activity          BountyActivity[]
@@ -112,6 +113,7 @@ model Bounty {
   @@index([completedAt])
   @@index([teamId])
   @@index([isPrivate])
+  @@index([targetRepo])
 }
 
 model BountyAssignee {
