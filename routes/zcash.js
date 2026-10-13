@@ -13,7 +13,7 @@ const {
 } = require("../helpers/zcash/zcashHelper.js");
 const executeZingoCliInfo = require("../utils/zingo/zingoLibInfo");
 
-const { sendRealtimeUpdate } = require("../middleware/websocket");
+const { sendToUser } = require("../middleware/websocket");
 
 const router = express.Router();
 
@@ -55,7 +55,8 @@ router.post("/import-wallet", authenticate, async (req, res) => {
     }
 
     // Validate seed phrase format (24 words)
-    const words = seedPhrase.trim().split(/\s+/);
+    const words =
+      typeof seedPhrase === "string" ? seedPhrase.trim().split(/\s+/) : [];
     if (words.length !== 24) {
       return res.status(400).json({
         success: false,
@@ -113,7 +114,26 @@ router.post("/import-wallet", authenticate, async (req, res) => {
       dataDir: getWalletDataDir(params.walletId),
     };
 
-    await executeZingoCliSeed(zingoParams, seedPhrase, birthdayHeight);
+    try {
+      await executeZingoCliSeed(zingoParams, seedPhrase, birthdayHeight);
+    } catch (seedError) {
+      // If the restore fails, remove the wallet again (same steps as
+      // DELETE /params/:accountName) so the name can be reused on retry
+      invalidateZingo({
+        chain: params.chain || "mainnet",
+        serverUrl: params.serverUrl || "http://127.0.0.1:8137",
+        dataDir: zingoParams.dataDir,
+      });
+      await fs.rm(zingoParams.dataDir, { recursive: true, force: true });
+      await prisma.zcashParams.delete({ where: { id: params.id } });
+
+      console.error("Error restoring wallet from seed:", seedError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to restore wallet from seed phrase",
+        error: seedError.message,
+      });
+    }
 
     await prisma.$transaction(
       async (tx) => {
@@ -582,7 +602,7 @@ router.patch(
         { timeout: 10000 },
       );
 
-      sendRealtimeUpdate("default_wallet_updated", updated, userId);
+      sendToUser(userId, "default_wallet_updated", updated);
 
       res.json({ success: true, data: updated });
     } catch (error) {
@@ -701,7 +721,7 @@ router.get("/info", authenticate, isAdmin, async (req, res) => {
       });
     }
 
-    const info = await executeZingoCliInfo("rescan", params);
+    const info = await executeZingoCliInfo("info", params);
 
     res.json(info);
   } catch (error) {
