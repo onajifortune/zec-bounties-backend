@@ -74,13 +74,9 @@ stub("utils/cache.js", {
 // requiring the router never triggers those side effects.
 stub("utils/notifyUser.js", async () => {});
 stub("utils/sendMail.js", async () => {});
+let adminWallet;
 stub("helpers/zcash/zcashHelper.js", {
-  getDefaultZcashParams: async () => ({
-    accountName: "Main",
-    chain: "mainnet",
-    serverUrl: "http://fake",
-    dataDir: "/tmp/unused",
-  }),
+  getDefaultZcashParams: async () => adminWallet,
   getLatestZcashParams: async () => null,
 });
 stub("utils/zingo/zingoLibQuickSend.js", (...args) => sendImpl(...args));
@@ -112,10 +108,18 @@ before(async () => {
 after(() => server.close());
 
 beforeEach(() => {
+  adminWallet = {
+    accountName: "Main",
+    chain: "mainnet",
+    serverUrl: "http://fake",
+    dataDir: "/tmp/unused",
+    teamId: null,
+  };
   bounties = [
     {
       id: "b1",
       title: "Guide",
+      teamId: null,
       chain: "MAIN",
       bountyAmount: 0.3,
       status: "DONE",
@@ -128,11 +132,11 @@ beforeEach(() => {
   txRows = [];
 });
 
-const pay = async () => {
+const pay = async (bountyIds = ["b1"]) => {
   const res = await fetch(`${baseUrl}/api/transactions/authorize-payment`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ bountyIds: ["b1"] }),
+    body: JSON.stringify({ bountyIds }),
   });
   return { status: res.status, body: await res.json() };
 };
@@ -182,6 +186,35 @@ describe("POST /authorize-payment settlement", () => {
     assert.equal(bounties[0].isPaid, false);
     assert.equal(bounties[0].paymentInFlight, false);
     assert.equal(txRows[0].status, "FAILED");
+  });
+
+  it("does not pay a team bounty from the admin wallet", async () => {
+    bounties.push({ ...bounties[0], id: "t1", teamId: "team1" });
+    let sent = false;
+    sendImpl = async () => {
+      sent = true;
+      return { txids: [TXID], error: null, timedOut: false, raw: "{}" };
+    };
+    const { status } = await pay(["t1"]);
+
+    assert.equal(status, 400);
+    assert.equal(sent, false);
+    assert.equal(bounties[1].isPaid, false);
+    assert.equal(bounties[1].paymentInFlight, false);
+  });
+
+  it("does not pay from a team wallet that became the admin's default", async () => {
+    adminWallet.teamId = "team1";
+    let sent = false;
+    sendImpl = async () => {
+      sent = true;
+      return { txids: [TXID], error: null, timedOut: false, raw: "{}" };
+    };
+    const { status } = await pay();
+
+    assert.equal(status, 400);
+    assert.equal(sent, false);
+    assert.equal(bounties[0].paymentInFlight, false);
   });
 
   it("releases the bounty when the send is refused before writing", async () => {

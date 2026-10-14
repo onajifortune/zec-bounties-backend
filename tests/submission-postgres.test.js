@@ -78,8 +78,10 @@ test("work submission eligibility and writes are atomic in PostgreSQL", {
         assert.equal(rows.length, successes);
         assert.ok(rows.every(r => r.status === "pending" && r.description === "Work completed" && r.deliverableUrl === "https://example.com/work"));
         assert.equal((await db.bounty.findUnique({ where: { id: bounty.id } })).status, "IN_REVIEW");
-        assert.equal(routes.reduce((n, r) => n + r.effects.broadcasts.length, 0), successes * 2);
-        assert.equal(routes.reduce((n, r) => n + r.effects.invalidations.length, 0), successes * 3);
+        // publishActivity is not awaited, so its event may arrive after this check.
+        const updates = routes.flatMap(r => r.effects.broadcasts).filter(([type]) => ["work_submitted", "bounty_updated"].includes(type));
+        assert.equal(updates.length, successes * 2);
+        assert.equal(routes.reduce((n, r) => n + r.effects.invalidations.length, 0), successes * 5);
         if (sameUser) assert.equal(results.find(r => r.statusCode === 400).body.error, "You have already submitted work for this bounty");
       });
     }

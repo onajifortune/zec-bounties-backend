@@ -67,6 +67,7 @@ function createHarness({ seedError } = {}) {
       getDefaultZcashParams: unused,
     },
     "../utils/zingo/zingoLibInfo": unused,
+    "../helpers/zcash/walletConnection": require("../helpers/zcash/walletConnection"),
     "../middleware/websocket": { sendToUser: unused },
     fs: { promises: { rm: async (dir) => effects.removedDirs.push(dir) } },
     path,

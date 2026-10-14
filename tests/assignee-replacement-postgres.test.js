@@ -104,8 +104,13 @@ function loadRoute(prisma) {
     }, { filename });
     return module.exports;
   }
+  const activity = load("utils/bountyActivity.js", {
+    "../prisma/client": trackedPrisma, "../middleware/websocket": { sendToUser: noOp },
+    "./userSelects": require(path.join(backend, "utils/userSelects")),
+  });
   const helpers = load("utils/bountyHelpers.js", {
     "../prisma/client": trackedPrisma, "./cache": cache, "./sendMail": noOp, "./notifyUser": noOp,
+    "../middleware/websocket": { sendRealtimeUpdate: (...args) => broadcasts.push(args) },
   });
   const router = Object.fromEntries(["get", "post", "put", "patch", "delete"].map(method => [method,
     (url, ...callbacks) => routes.set(`${method} ${url}`, callbacks.at(-1)),
@@ -120,6 +125,14 @@ function loadRoute(prisma) {
     "../utils/constants": {}, "../helpers/validateBounty": {},
     "../utils/userIdentity": require(path.join(backend, "utils/userIdentity")),
     "../utils/userSelects": require(path.join(backend, "utils/userSelects")),
+    "../utils/privacy": require(path.join(backend, "utils/privacy")),
+    "../utils/bountySuggestionReview": require(path.join(backend, "utils/bountySuggestionReview")),
+    // Real activity rows. Passing a client skips the unawaited fan-out, which
+    // could outlive the test schema.
+    "../utils/bountyActivity": {
+      logActivity: (client, entry) => activity.logActivity(client ?? trackedPrisma, entry),
+      publishActivity: noOp,
+    },
     "../utils/bountyHelpers": helpers,
   });
   const handler = routes.get("post /:id/assignees");

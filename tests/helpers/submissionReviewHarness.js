@@ -35,6 +35,7 @@ function loadSubmissionReviewRoute(prisma) {
     "./cache": cache,
     "./sendMail": noOp,
     "./notifyUser": noOp,
+    "../middleware/websocket": { sendRealtimeUpdate: (...args) => effects.broadcasts.push(args) },
   });
   let handler;
   const router = Object.fromEntries(["get", "post", "put", "delete", "patch"].map(method => [method,
@@ -56,8 +57,11 @@ function loadSubmissionReviewRoute(prisma) {
     "../utils/constants": {},
     "../helpers/validateBounty": {},
     "../utils/userSelects": require("../../utils/userSelects"),
+    "../utils/privacy": require("../../utils/privacy"),
     "../utils/bountyHelpers": helpers,
     "../utils/userIdentity": require("../../utils/userIdentity"),
+    "../utils/bountySuggestionReview": require("../../utils/bountySuggestionReview"),
+    "../utils/bountyActivity": { logActivity: noOp, publishActivity: noOp },
   });
   return {
     effects,

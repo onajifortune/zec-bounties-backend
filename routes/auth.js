@@ -508,6 +508,13 @@ router.post("/recovery/request-otp", authenticate, async (req, res) => {
 
     const issued = otpStore.issue(req.user.id);
 
+    if (issued.error === "locked") {
+      return res.status(429).json({
+        error: "Too many incorrect attempts. Please try again later.",
+        retryAfterMs: issued.retryAfterMs,
+      });
+    }
+
     if (issued.error === "cooldown") {
       return res.status(429).json({
         error:
@@ -553,8 +560,9 @@ router.post("/recovery/verify-otp", authenticate, async (req, res) => {
   }
 
   if (result.status === "locked") {
-    return res.status(401).json({
-      error: "Too many incorrect attempts. Request a new one.",
+    return res.status(429).json({
+      error: "Too many incorrect attempts. Please try again later.",
+      retryAfterMs: result.retryAfterMs,
     });
   }
 
@@ -565,20 +573,22 @@ router.post("/recovery/verify-otp", authenticate, async (req, res) => {
   }
 
   try {
-    // Find the wallet params belonging to this user.
-    // walletId is now the source of truth for the wallet directory.
+    // Find the user's PERSONAL wallet params. Team wallet copies are shared, so
+    // they are not recoverable here; scoping to teamId: null excludes them (a
+    // user may hold a personal and a team wallet with the same accountName).
+    // Team-wallet recovery, if ever needed, must be a separate OWNER-only,
+    // requireTeamAdmin-gated endpoint.
     const zcashParam = await prisma.zcashParams.findFirst({
       where: {
         accountName,
         ownerId: req.user.id,
+        teamId: null,
       },
       select: {
         walletId: true,
         accountName: true,
         chain: true,
         serverUrl: true,
-        isTeam: true,
-        teamId: true,
       },
     });
 

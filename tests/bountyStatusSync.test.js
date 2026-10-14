@@ -116,6 +116,7 @@ function fixture(status = "IN_PROGRESS", submissionStatus = "pending") {
     "../helpers/validateBounty": {},
     "../utils/bountySuggestionReview": require("../utils/bountySuggestionReview"),
     "../utils/userSelects": require("../utils/userSelects"),
+    "../utils/privacy": require("../utils/privacy"),
     "../utils/userIdentity": {},
     "../utils/bountyActivity": {
       logActivity: (tx, data) => tx.bountyActivity.create({ data }),

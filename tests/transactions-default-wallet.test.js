@@ -55,6 +55,7 @@ function createHarness({ defaults }) {
     "../utils/cache": { delCache: unused, deleteCacheByPattern: unused },
     "../utils/bountyHelpers": { invalidateBounty: async () => {} },
     "../utils/zingo/zingoLibInfo": unused,
+    "../helpers/zcash/walletConnection": require("../helpers/zcash/walletConnection"),
     crypto: require("node:crypto"),
     "../middleware/websocket": { sendRealtimeUpdate() {}, sendToUser() {} },
     path,

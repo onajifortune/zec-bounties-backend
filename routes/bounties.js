@@ -59,6 +59,7 @@ const {
   bountyInvolvesUserWhere,
 } = require("../utils/userIdentity");
 const { logActivity, publishActivity } = require("../utils/bountyActivity");
+const { redactPublicUser } = require("../utils/privacy");
 
 // ─── Email settings ───────────────────────────────────────────────────────────
 const ENABLE_EMAILS_IN_DEV = false; // Set to true when you want to test emails
@@ -506,8 +507,9 @@ router.get("/", optionalAuthenticate, async (req, res) => {
     // genuinely differ by who's asking, not just by auth level.
     // ------------------------------------------------------------
     const version = await getVersion("bounties");
+    const privacyVersion = await getVersion("privacy");
 
-    const cacheKey = `bounties:v${version}:${JSON.stringify({
+    const cacheKey = `bounties:v${version}:p${privacyVersion}:${JSON.stringify({
       page,
       limit,
       chain: chainParam,
@@ -521,6 +523,17 @@ router.get("/", optionalAuthenticate, async (req, res) => {
     const { user: assigneeUserSelect, createdByUser: createdByUserSelect } =
       bountyUserSelects({ isAuthed, isAdmin });
 
+    // Always pull profileVisibility so we can redact before the response
+    // (and before the cache write). Admins skip redaction.
+    const publicUserSelect = {
+      ...assigneeUserSelect,
+      profileVisibility: true,
+    };
+    const publicCreatedBySelect = {
+      ...createdByUserSelect,
+      profileVisibility: true,
+    };
+
     const [bounties, total] = await Promise.all([
       prisma.bounty.findMany({
         where,
@@ -528,16 +541,27 @@ router.get("/", optionalAuthenticate, async (req, res) => {
         take: limit,
         orderBy: { dateCreated: "desc" },
         include: {
-          assignees: { include: { user: { select: assigneeUserSelect } } },
-          assigneeUser: { select: assigneeUserSelect },
-          createdByUser: { select: createdByUserSelect },
+          assignees: { include: { user: { select: publicUserSelect } } },
+          assigneeUser: { select: publicUserSelect },
+          createdByUser: { select: publicCreatedBySelect },
           team: { select: { id: true, name: true, logo: true } },
         },
       }),
       prisma.bounty.count({ where }),
     ]);
 
-    const result = { data: bounties, total, page, limit };
+    const redactUser = (u) => redactPublicUser(u, { forceFull: isAdmin });
+
+    const data = bounties.map((b) => ({
+      ...b,
+      assigneeUser: redactUser(b.assigneeUser),
+      createdByUser: redactUser(b.createdByUser),
+      assignees: Array.isArray(b.assignees)
+        ? b.assignees.map((a) => ({ ...a, user: redactUser(a.user) }))
+        : b.assignees,
+    }));
+
+    const result = { data, total, page, limit };
 
     await setCache(cacheKey, result, TTL.BOUNTY_LIST);
     console.log(result);
@@ -2795,10 +2819,11 @@ router.get("/:id", optionalAuthenticate, async (req, res) => {
     const userId = req.user?.id ?? "anon";
     const isAdmin = req.user?.role === "ADMIN";
     const version = await getVersion("bounties");
+    const privacyVersion = await getVersion("privacy");
 
     // Scoped per-viewer, not just per-auth-state — matches the GET / pattern
     // and prevents one user's cached view of a private bounty leaking to another.
-    const cacheKey = `bounty:v${version}:${isAdmin ? "admin" : userId}:${bountyId}`;
+    const cacheKey = `bounty:v${version}:p${privacyVersion}:${isAdmin ? "admin" : userId}:${bountyId}`;
 
     const cached = await getCache(cacheKey);
     if (cached) return res.json(cached);
@@ -2806,12 +2831,18 @@ router.get("/:id", optionalAuthenticate, async (req, res) => {
     const { user: userSelect, createdByUser: createdByUserSelect } =
       bountyUserSelects({ isAuthed, isAdmin });
 
+    const publicUserSelect = { ...userSelect, profileVisibility: true };
+    const publicCreatedBySelect = {
+      ...createdByUserSelect,
+      profileVisibility: true,
+    };
+
     const bounty = await prisma.bounty.findUnique({
       where: { id: bountyId },
       include: {
-        assigneeUser: { select: userSelect },
-        assignees: { include: { user: { select: userSelect } } },
-        createdByUser: { select: createdByUserSelect },
+        assigneeUser: { select: publicUserSelect },
+        assignees: { include: { user: { select: publicUserSelect } } },
+        createdByUser: { select: publicCreatedBySelect },
         team: { select: { id: true, name: true, logo: true } },
       },
     });

@@ -179,13 +179,24 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
       });
     }
 
+    // Joining a team makes the team wallet the member's default, so an admin
+    // in a team would otherwise pay platform bounties from team funds.
+    if (adminWallet.teamId) {
+      return res.status(400).json({
+        error:
+          "Your default wallet is a team wallet. Please set a personal wallet as default before authorizing payments.",
+      });
+    }
+
     const bountyChainForWallet =
       adminWallet.chain === "mainnet" ? "MAIN" : "TEST";
 
-    // Fetch the selected bounties with their assignees
+    // Fetch the selected bounties with their assignees. Team bounties are
+    // paid from the team wallet (POST /api/teams/:teamId/wallet/authorize-payment).
     const bounties = await prisma.bounty.findMany({
       where: {
         id: { in: bountyIds },
+        teamId: null,
         status: "DONE",
         isPaid: false,
         isApproved: true,
@@ -271,6 +282,7 @@ router.post("/authorize-payment", authenticate, isAdmin, async (req, res) => {
         const result = await tx.bounty.updateMany({
           where: {
             id: { in: payableIds },
+            teamId: null,
             status: "DONE",
             isApproved: true,
             isPaid: false,

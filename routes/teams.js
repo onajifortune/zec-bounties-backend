@@ -8,6 +8,9 @@ const {
   AUTH_USER_SELECT,
 } = require("../middleware/auth");
 const { isSettableMemberRole } = require("../helpers/teamRoles");
+const {
+  validateWalletConnection,
+} = require("../helpers/zcash/walletConnection");
 const { initZcashOnce, initZcashOnceForTeams } = require("../zcash/init");
 const {
   sendRealtimeUpdate,
@@ -51,7 +54,6 @@ const {
   requireOnboarded,
   createBountyWithQuota,
   WeeklyBountyQuotaError,
-  getWeeklyBountyQuota,
   requireTaskCreation,
 } = require("../utils/bountyHelpers");
 
@@ -795,13 +797,6 @@ router.post(
             .status(403)
             .json({ error: "You are not a member of this team" });
         }
-        const quota = await getWeeklyBountyQuota(req.user.id);
-        if (quota.remaining <= 0) {
-          return res.status(429).json({
-            error: `Weekly bounty creation limit reached (${quota.limit} per week)`,
-            ...quota,
-          });
-        }
       }
 
       const TARGET_REPOS = new Set([
@@ -821,7 +816,7 @@ router.post(
       const canAssignOthers = ["ADMIN", "TEAM"].includes(req.user.role);
       const resolvedAssignee =
         canAssignOthers && assignee !== "none" ? assignee : null;
-      const bounty = await prisma.bounty.create({
+      const bounty = await createBountyWithQuota(req.user, {
         data: {
           title,
           description,
@@ -1661,6 +1656,20 @@ router.post("/:teamId/members", authenticate, async (req, res) => {
       });
     }
 
+    // The upsert below rewrites the role of anyone already in the team, so
+    // re-adding the OWNER would demote them. Same rule as PATCH.
+    if (req.user.role !== "ADMIN") {
+      const owner = await prisma.teamMember.findFirst({
+        where: { teamId, userId: { in: userIds }, role: "OWNER" },
+        select: { userId: true },
+      });
+      if (owner) {
+        return res
+          .status(403)
+          .json({ error: "The team owner's role cannot be changed here" });
+      }
+    }
+
     const members = await Promise.all(
       userIds.map((userId) =>
         prisma.teamMember.upsert({
@@ -1886,6 +1895,11 @@ router.post("/:teamId/wallet", authenticate, async (req, res) => {
       });
     }
 
+    const connectionError = validateWalletConnection({ chain, serverUrl });
+    if (connectionError) {
+      return res.status(400).json({ error: connectionError });
+    }
+
     const existing = await prisma.teamWallet.findUnique({
       where: {
         teamId,
@@ -2023,6 +2037,11 @@ router.post("/:teamId/wallet/import", authenticate, async (req, res) => {
       return res.status(400).json({
         error: "Seed phrase must be 24 words",
       });
+    }
+
+    const connectionError = validateWalletConnection({ chain, serverUrl });
+    if (connectionError) {
+      return res.status(400).json({ error: connectionError });
     }
 
     const existing = await prisma.teamWallet.findUnique({

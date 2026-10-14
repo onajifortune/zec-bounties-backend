@@ -84,3 +84,11 @@ test("edit permission is checked before invalid input is examined", async () => 
   assert.equal(res.statusCode, 403);
   assert.equal(h.writes.length, 0);
 });
+test("edit: a non-admin creator cannot move a bounty out of its team", async () => {
+  const h = fixture();
+  h.bounty.teamId = "team1";
+  const res = await h.request("edit", { teamId: "" }, { user: { id: "owner", role: "TEAM" } });
+  assert.equal(res.statusCode, 403);
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.bounty.teamId, "team1");
+});

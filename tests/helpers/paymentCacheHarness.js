@@ -104,6 +104,7 @@ function createPaymentCacheHarness({ sendError = null } = {}) {
     "../utils/bountyHelpers": helpers,
     "../utils/bountyActivity": { logActivity: async () => {}, publishActivity: async () => {} },
     "../utils/userSelects": require("../../utils/userSelects"),
+    "../utils/privacy": require("../../utils/privacy"),
     "../utils/userIdentity": require("../../utils/userIdentity"),
     "../helpers/email": {}, "../helpers/validateBounty": {},
 "../utils/bountySuggestionReview": require("../../utils/bountySuggestionReview"),

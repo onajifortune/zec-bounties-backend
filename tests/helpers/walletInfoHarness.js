@@ -76,6 +76,7 @@ function createWalletInfoHarness({ defaults, failInfo = false } = {}) {
       },
     },
     "../utils/zingo/zingoLibInfo": executeInfo,
+    "../helpers/zcash/walletConnection": require("../../helpers/zcash/walletConnection"),
     "../middleware/websocket": { sendRealtimeUpdate: forbidden },
     fs: { promises: { rm: forbidden } }, path,
     "../utils/zingo/getZingo": { invalidateZingo: forbidden },
