@@ -341,6 +341,7 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
     sendRealtimeUpdate("new_bounties", bounty, req.user.id, recipients);
     await bumpVersion("bounties");
     if (!bounty.isPrivate) notifyNewBounty(bounty);
+    console.log(bounty);
     res.status(201).json(bounty);
 
     (async () => {
@@ -487,14 +488,16 @@ router.get("/", optionalAuthenticate, async (req, res) => {
       ...chainFilter,
       ...visibilityFilter,
       ...userFilter,
-      AND: [
-        {
-          OR: [
-            { suggestionReviewStatus: null },
-            { suggestionReviewStatus: { not: "PENDING" } },
-          ],
-        },
-      ],
+      ...(!isAdmin && {
+        AND: [
+          {
+            OR: [
+              { suggestionReviewStatus: null },
+              { suggestionReviewStatus: { not: "PENDING" } },
+            ],
+          },
+        ],
+      }),
     };
 
     // ------------------------------------------------------------
@@ -537,6 +540,7 @@ router.get("/", optionalAuthenticate, async (req, res) => {
     const result = { data: bounties, total, page, limit };
 
     await setCache(cacheKey, result, TTL.BOUNTY_LIST);
+    console.log(result);
     return res.json(result);
   } catch (error) {
     console.error("Failed to fetch bounties:", error);
