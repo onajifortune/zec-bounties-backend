@@ -238,6 +238,13 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
   try {
     if (!requireOnboarded(req, res)) return;
 
+    // Hunters are not allowed to create bounties.
+    if (req.user.role === "HUNTER") {
+      return res.status(403).json({
+        error: "Hunters are not allowed to create bounties",
+      });
+    }
+
     const {
       title,
       description,
@@ -253,6 +260,7 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
     const validation = validateBountyCreate(req.body);
     if (!validation.valid)
       return res.status(400).json({ error: validation.error });
+
     const categoryValidation = await validateCategory(prisma, categoryId);
     if (!categoryValidation.valid) {
       return res.status(400).json({ error: categoryValidation.error });
@@ -267,14 +275,15 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
       return res.status(400).json({ error: "Invalid chain value" });
     }
 
-    // If a teamId was given, confirm it exists. Hunters submit suggestions
-    // without team membership; other non-admin creators must be members. `team` is
-    // declared here (not with `const` inside the `if`) so it's still in
-    // scope below when we denormalize its privacy flag onto the bounty.
     let team = null;
+
     if (teamId) {
       team = await prisma.team.findUnique({ where: { id: teamId } });
-      if (!team) return res.status(404).json({ error: "Team not found" });
+
+      if (!team) {
+        return res.status(404).json({ error: "Team not found" });
+      }
+
       if (!team.isVerified) {
         return res.status(403).json({
           error: `${team.name} must be verified by ${REQUIRED_TEAM_VERIFICATIONS} admins before it can post bounties`,
@@ -283,8 +292,14 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
 
       if (!["ADMIN", "HUNTER"].includes(req.user.role)) {
         const membership = await prisma.teamMember.findUnique({
-          where: { teamId_userId: { teamId, userId: req.user.id } },
+          where: {
+            teamId_userId: {
+              teamId,
+              userId: req.user.id,
+            },
+          },
         });
+
         if (!membership) {
           return res
             .status(403)
@@ -295,14 +310,13 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
 
     const isHunter = req.user.role === "HUNTER";
     const canAssignOthers = ["ADMIN", "TEAM"].includes(req.user.role);
+
     const resolvedAssignee = isHunter
       ? req.user.id
       : canAssignOthers && assignee !== "none"
         ? assignee
         : null;
 
-    // Non-admins stay unapproved until review. Hunter suggestions are
-    // unapproved even when aimed at a team.
     const resolvedIsApproved =
       req.user.role === "ADMIN" || (team !== null && !isHunter);
 
@@ -315,40 +329,56 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
         createdBy: req.user.id,
         assignee: resolvedAssignee,
         isApproved: resolvedIsApproved,
-        ...(isHunter && teamId && { suggestionReviewStatus: "PENDING" }),
+        ...(isHunter &&
+          teamId && {
+            suggestionReviewStatus: "PENDING",
+          }),
         categoryId: categoryId || null,
         ...(chain && { chain }),
         ...(teamId && { teamId }),
         ...(resolvedTargetRepo && { targetRepo: resolvedTargetRepo }),
         isPrivate: team ? team.isPrivate : resolvedAssignee === req.user.id,
         ...(resolvedAssignee && {
-          assignees: { create: { userId: resolvedAssignee } },
+          assignees: {
+            create: { userId: resolvedAssignee },
+          },
         }),
       },
       include: {
         createdByUser: { select: USER_SELECT },
-        assignees: { include: { user: { select: USER_SELECT } } },
+        assignees: {
+          include: { user: { select: USER_SELECT } },
+        },
         assigneeUser: { select: USER_SELECT },
-        team: { select: { id: true, name: true, logo: true } },
+        team: {
+          select: { id: true, name: true, logo: true },
+        },
       },
     });
 
     const recipients = await getBroadcastRecipients(bounty);
+
     logActivity(null, {
       bountyId: bounty.id,
       actorId: req.user.id,
       type: "CREATED",
     }).catch(console.error);
+
     sendRealtimeUpdate("new_bounties", bounty, req.user.id, recipients);
+
     await bumpVersion("bounties");
+
     if (!bounty.isPrivate) notifyNewBounty(bounty);
+
     res.status(201).json(bounty);
 
     (async () => {
       try {
         const creatorDisplayName =
           bounty.createdByUser.nickname || bounty.createdByUser.name;
+
         const cachedUsers = await getCache("users:all");
+
         const users =
           cachedUsers ??
           (await prisma.user.findMany({
@@ -359,25 +389,29 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
               pushNotifications: true,
             },
           }));
-        // A private bounty is announced only to its audience, the same
-        // people who got the realtime update above.
+
         const audience = recipients && new Set(recipients);
+
         const otherUsers = users.filter(
           (u) => u.id !== req.user.id && (!audience || audience.has(u.id)),
         );
+
         const emailRecipients = otherUsers
           .filter((u) => u.emailNotifications !== false)
           .map((u) => u.email)
           .filter(Boolean);
+
         const pushCandidateIds = otherUsers
           .filter((u) => u.pushNotifications)
           .map((u) => u.id);
+
         await Promise.all([
           sendPushToOptedIn(pushCandidateIds, {
             title: "New Bounty Available",
             body: `${bounty.title} — ${bounty.bountyAmount} ZEC`,
             url: `/bounty/${bounty.id}`,
           }),
+
           Promise.all(
             emailRecipients.map((recipient) =>
               sendMailIfEnabled({
@@ -385,15 +419,15 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
                 subject: `New Bounty Created: ${bounty.title}`,
                 text: `A new bounty has been created.\n\nCreated by: ${creatorDisplayName}\n\nTitle: ${bounty.title}\nAmount: ${bounty.bountyAmount}`,
                 html: `
-            <h2>New Bounty Created</h2>
-            <p><strong>Created by:</strong> ${creatorDisplayName}</p>
-            <p><strong>Title:</strong> ${bounty.title}</p>
-            <p><strong>Description:</strong><br/>
-              ${formatEmailText(bounty.description)}
-            </p>
-            <p><strong>Amount:</strong> ${bounty.bountyAmount} ZEC</p>
-            <p><strong>Time to complete:</strong> ${bounty.timeToComplete}</p>
-          `,
+                  <h2>New Bounty Created</h2>
+                  <p><strong>Created by:</strong> ${creatorDisplayName}</p>
+                  <p><strong>Title:</strong> ${bounty.title}</p>
+                  <p><strong>Description:</strong><br/>
+                    ${formatEmailText(bounty.description)}
+                  </p>
+                  <p><strong>Amount:</strong> ${bounty.bountyAmount} ZEC</p>
+                  <p><strong>Time to complete:</strong> ${bounty.timeToComplete}</p>
+                `,
               }),
             ),
           ),
@@ -404,9 +438,14 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
     })();
   } catch (err) {
     if (err instanceof WeeklyBountyQuotaError) {
-      return res.status(429).json({ error: err.message, ...err.quota });
+      return res.status(429).json({
+        error: err.message,
+        ...err.quota,
+      });
     }
+
     console.error(err);
+
     res.status(500).json({ error: "Failed to create bounty" });
   }
 });
