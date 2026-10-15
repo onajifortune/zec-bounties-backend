@@ -342,7 +342,6 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
     sendRealtimeUpdate("new_bounties", bounty, req.user.id, recipients);
     await bumpVersion("bounties");
     if (!bounty.isPrivate) notifyNewBounty(bounty);
-    console.log(bounty);
     res.status(201).json(bounty);
 
     (async () => {
@@ -360,7 +359,12 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
               pushNotifications: true,
             },
           }));
-        const otherUsers = users.filter((u) => u.id !== req.user.id);
+        // A private bounty is announced only to its audience, the same
+        // people who got the realtime update above.
+        const audience = recipients && new Set(recipients);
+        const otherUsers = users.filter(
+          (u) => u.id !== req.user.id && (!audience || audience.has(u.id)),
+        );
         const emailRecipients = otherUsers
           .filter((u) => u.emailNotifications !== false)
           .map((u) => u.email)
@@ -564,7 +568,6 @@ router.get("/", optionalAuthenticate, async (req, res) => {
     const result = { data, total, page, limit };
 
     await setCache(cacheKey, result, TTL.BOUNTY_LIST);
-    console.log(result);
     return res.json(result);
   } catch (error) {
     console.error("Failed to fetch bounties:", error);
@@ -1117,7 +1120,12 @@ router.patch("/:id/suggestion-review", authenticate, async (req, res) => {
     });
 
     await invalidateBounty(bounty.id);
-    sendRealtimeUpdate("bounty_updated", updated, req.user.id);
+    await broadcastBountyEvent(
+      "bounty_updated",
+      updated,
+      bounty.id,
+      req.user.id,
+    );
     return res.json(updated);
   } catch (error) {
     console.error("Failed to review bounty suggestion:", error);
@@ -1240,8 +1248,13 @@ router.post("/:id/submit", authenticate, async (req, res) => {
     const { description, deliverableUrl } = req.body;
     const userId = req.user.id;
 
-    if (!description?.trim()) {
+    if (typeof description !== "string" || !description.trim()) {
       return res.status(400).json({ error: "Work description is required" });
+    }
+    if (deliverableUrl != null && typeof deliverableUrl !== "string") {
+      return res
+        .status(400)
+        .json({ error: "Deliverable URL must be a string" });
     }
 
     // Retry serialization conflicts with a fresh eligibility snapshot. Retrying
@@ -1697,8 +1710,13 @@ router.patch("/submissions/:submissionId", authenticate, async (req, res) => {
     const { description, deliverableUrl } = req.body;
     const userId = req.user.id;
 
-    if (!description?.trim()) {
+    if (typeof description !== "string" || !description.trim()) {
       return res.status(400).json({ error: "Work description is required" });
+    }
+    if (deliverableUrl != null && typeof deliverableUrl !== "string") {
+      return res
+        .status(400)
+        .json({ error: "Deliverable URL must be a string" });
     }
 
     const submission = await prisma.workSubmission.findUnique({
@@ -2852,8 +2870,18 @@ router.get("/:id", optionalAuthenticate, async (req, res) => {
       return res.status(404).json({ error: "Bounty not found" });
     }
 
-    await setCache(cacheKey, bounty, TTL.BOUNTY_SINGLE);
-    res.json(bounty);
+    const redactUser = (u) => redactPublicUser(u, { forceFull: isAdmin });
+    const redacted = {
+      ...bounty,
+      assigneeUser: redactUser(bounty.assigneeUser),
+      createdByUser: redactUser(bounty.createdByUser),
+      assignees: Array.isArray(bounty.assignees)
+        ? bounty.assignees.map((a) => ({ ...a, user: redactUser(a.user) }))
+        : bounty.assignees,
+    };
+
+    await setCache(cacheKey, redacted, TTL.BOUNTY_SINGLE);
+    res.json(redacted);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch bounty" });
@@ -2903,8 +2931,12 @@ router.put("/:id", authenticate, async (req, res) => {
     // frozen once a payout is authorised, in flight, or done. Without this a
     // creator could repoint an approved payout to themselves or inflate the
     // amount before the batch runs.
+    // The edit forms re-send the current reward with every save, so an
+    // unchanged amount is not a payout edit.
     const editsPayoutFields =
-      req.body.assignee !== undefined || req.body.bountyAmount !== undefined;
+      req.body.assignee !== undefined ||
+      (req.body.bountyAmount !== undefined &&
+        Number(req.body.bountyAmount) !== Number(existing.bountyAmount));
     if (editsPayoutFields) {
       if (!(await canAdministerBounty(existing, req.user))) {
         return res.status(403).json({
