@@ -170,7 +170,17 @@ async function canViewPrivateBounty(bounty, user) {
   const teamMember = await prisma.teamMember.findUnique({
     where: { teamId_userId: { teamId: bounty.teamId, userId: user.id } },
   });
-  return !!teamMember;
+  if (teamMember) return true;
+
+  // Community membership = favorited the team (hunters only)
+  if (user.role === "HUNTER") {
+    const fav = await prisma.teamFavorite.findUnique({
+      where: { userId_teamId: { userId: user.id, teamId: bounty.teamId } },
+      select: { userId: true },
+    });
+    return !!fav;
+  }
+  return false;
 }
 
 // ─── Weekly bounty-creation quota ───────────────────────────────────────────
@@ -547,14 +557,21 @@ router.get("/", optionalAuthenticate, async (req, res) => {
             ...(userId
               ? [
                   { isPrivate: true, createdBy: userId },
-                  {
-                    isPrivate: true,
-                    team: { members: { some: { userId } } },
-                  },
+                  { isPrivate: true, team: { members: { some: { userId } } } },
+                  ...(req.user.role === "HUNTER"
+                    ? [
+                        {
+                          isPrivate: true,
+                          team: { favoritedBy: { some: { userId } } },
+                        },
+                      ]
+                    : []),
                 ]
               : []),
           ],
         };
+
+    // const visibilityFilter = {};
 
     const userTerm = String(req.query.user || "").trim();
     let userFilter = {};
