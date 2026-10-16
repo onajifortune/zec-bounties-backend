@@ -180,6 +180,9 @@ async function canViewPrivateBounty(bounty, user) {
 // Gold star = 15+ completed tasks.
 const GOLD_STAR_THRESHOLD = 15;
 
+// Hunters must have this many completed bounties before they can post.
+const MIN_COMPLETED_TO_POST = 5;
+
 const WEEKLY_BOUNTY_LIMIT_GOLD =
   process.env.NODE_ENV === "production"
     ? 2
@@ -218,6 +221,28 @@ async function isGoldStarOrAbove(userId) {
   return completed >= GOLD_STAR_THRESHOLD;
 }
 
+// Same contract as isGoldStarOrAbove: an explicit avatar:N admin override
+// wins over the live DONE count.
+async function hasCompletedEnoughToPost(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { badges: true },
+  });
+
+  const overrideTier = getAvatarOverrideTier(user?.badges);
+  if (overrideTier !== null) {
+    return {
+      allowed: overrideTier >= MIN_COMPLETED_TO_POST,
+      completed: overrideTier,
+    };
+  }
+
+  const completed = await prisma.bounty.count({
+    where: { assignee: userId, status: "DONE" },
+  });
+  return { allowed: completed >= MIN_COMPLETED_TO_POST, completed };
+}
+
 // Fixed calendar week, Monday 00:00 UTC through the following Monday 00:00 UTC.
 function getCalendarWeekBounds(date = new Date()) {
   const d = new Date(
@@ -243,6 +268,20 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
       return res.status(403).json({
         error: "Hunters are not allowed to create bounties",
       });
+    }
+
+    // Hunters must have completed at least MIN_COMPLETED_TO_POST bounties.
+    if (req.user.role === "HUNTER") {
+      const { allowed, completed } = await hasCompletedEnoughToPost(
+        req.user.id,
+      );
+      if (!allowed) {
+        return res.status(403).json({
+          error: `Complete at least ${MIN_COMPLETED_TO_POST} bounties before posting your own (${completed}/${MIN_COMPLETED_TO_POST} done)`,
+          completed,
+          required: MIN_COMPLETED_TO_POST,
+        });
+      }
     }
 
     const {
@@ -2735,6 +2774,19 @@ router.get("/mine/quota", authenticate, async (req, res) => {
       });
     }
     const quota = await getWeeklyBountyQuota(req.user.id);
+    if (req.user.role === "HUNTER") {
+      const { allowed, completed } = await hasCompletedEnoughToPost(
+        req.user.id,
+      );
+      return res.json({
+        ...quota,
+        postEligibility: {
+          allowed,
+          completed,
+          required: MIN_COMPLETED_TO_POST,
+        },
+      });
+    }
     res.json(quota);
   } catch (error) {
     console.error("Error fetching bounty quota:", error);
