@@ -56,6 +56,7 @@ const {
   WeeklyBountyQuotaError,
   requireTaskCreation,
 } = require("../utils/bountyHelpers");
+const { redactPublicUser } = require("../utils/privacy");
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -675,8 +676,12 @@ router.get("/:teamId/bounties", optionalAuthenticate, async (req, res) => {
       }
 
       const member = await getTeamMember(teamId, userId);
+      const community =
+        !member &&
+        req.user.role === "HUNTER" &&
+        (await isCommunityMember(teamId, userId));
 
-      if (!member) {
+      if (!member && !community) {
         return res.json({ data: [], total: 0, page, limit });
       }
     }
@@ -708,21 +713,39 @@ router.get("/:teamId/bounties", optionalAuthenticate, async (req, res) => {
       return res.status(400).json({ error: "Invalid chain value" });
     }
 
-    const where = { teamId, ...chainFilter };
+    const where = {
+      teamId,
+      ...chainFilter,
+      ...(!isAdmin && {
+        OR: [
+          { suggestionReviewStatus: null },
+          { suggestionReviewStatus: { not: "PENDING" } },
+        ],
+      }),
+    };
 
     const version = await getVersion("bounties");
-    const cacheKey = `team-bounties:${teamId}:v${version}:${JSON.stringify({
-      page,
-      limit,
-      chain: chainParam,
-      viewer: isAdmin ? "admin" : isAuthed ? "member" : "public",
-    })}`;
+    const privacyVersion = await getVersion("privacy");
+    const cacheKey = `team-bounties:${teamId}:v${version}:p${privacyVersion}:${JSON.stringify(
+      {
+        page,
+        limit,
+        chain: chainParam,
+        viewer: isAdmin ? "admin" : isAuthed ? "member" : "public",
+      },
+    )}`;
 
     const cached = await getCache(cacheKey);
     if (cached) return res.json(cached);
 
     const { user: assigneeUserSelect, createdByUser: createdByUserSelect } =
       bountyUserSelects({ isAuthed, isAdmin });
+
+    const publicUserSelect = { ...assigneeUserSelect, profileVisibility: true };
+    const publicCreatedBySelect = {
+      ...createdByUserSelect,
+      profileVisibility: true,
+    };
 
     const [bounties, total] = await Promise.all([
       prisma.bounty.findMany({
@@ -731,15 +754,26 @@ router.get("/:teamId/bounties", optionalAuthenticate, async (req, res) => {
         take: limit,
         orderBy: { dateCreated: "desc" },
         include: {
-          assignees: { include: { user: { select: assigneeUserSelect } } },
-          assigneeUser: { select: assigneeUserSelect },
-          createdByUser: { select: createdByUserSelect },
+          assignees: { include: { user: { select: publicUserSelect } } },
+          assigneeUser: { select: publicUserSelect },
+          createdByUser: { select: publicCreatedBySelect },
+          team: { select: { id: true, name: true, logo: true } },
         },
       }),
       prisma.bounty.count({ where }),
     ]);
 
-    const result = { data: bounties, total, page, limit };
+    const redactUser = (u) => redactPublicUser(u, { forceFull: isAdmin });
+    const data = bounties.map((b) => ({
+      ...b,
+      assigneeUser: redactUser(b.assigneeUser),
+      createdByUser: redactUser(b.createdByUser),
+      assignees: Array.isArray(b.assignees)
+        ? b.assignees.map((a) => ({ ...a, user: redactUser(a.user) }))
+        : b.assignees,
+    }));
+
+    const result = { data, total, page, limit };
 
     await setCache(cacheKey, result, TTL.BOUNTY_LIST);
     return res.json(result);
