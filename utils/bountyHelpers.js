@@ -112,7 +112,6 @@ async function broadcastTeamEvent(
     } else if (team.isPrivate) {
       recipients = await getBroadcastRecipients({ isPrivate: true, teamId });
     }
-
     sendRealtimeUpdate(type, payload, excludeUserId, recipients);
   } catch (err) {
     console.error(`Realtime ${type} for team ${teamId} not sent:`, err);
@@ -192,14 +191,12 @@ async function isGoldStarOrAbove(userId, db) {
     where: { id: userId },
     select: { badges: true },
   });
-
   const overrideTier = getAvatarOverrideTier(user?.badges);
   if (overrideTier !== null) return overrideTier >= GOLD_STAR_THRESHOLD;
 
   const completed = await db.bounty.count({
     where: { assignee: userId, status: "DONE" },
   });
-
   return completed >= GOLD_STAR_THRESHOLD;
 }
 
@@ -223,13 +220,10 @@ async function getWeeklyBountyQuota(userId, db = prisma, date = new Date()) {
   const limit = isGold
     ? WEEKLY_BOUNTY_LIMIT_GOLD
     : WEEKLY_BOUNTY_LIMIT_STANDARD;
-
   const { start, end } = getCalendarWeekBounds(date);
-
   const used = await db.bounty.count({
     where: { createdBy: userId, dateCreated: { gte: start, lt: end } },
   });
-
   return { limit, used, remaining: Math.max(0, limit - used), resetsAt: end };
 }
 
@@ -255,7 +249,6 @@ async function createBountyWithQuota(user, args) {
           const dateCreated = new Date();
           const quota = await getWeeklyBountyQuota(user.id, tx, dateCreated);
           if (quota.remaining <= 0) throw new WeeklyBountyQuotaError(quota);
-
           return tx.bounty.create({
             ...args,
             data: { ...args.data, dateCreated },
@@ -270,6 +263,7 @@ async function createBountyWithQuota(user, args) {
     }
   }
 }
+
 const requireTaskCreation = async (req, res, next) => {
   try {
     const u = await prisma.user.findUnique({

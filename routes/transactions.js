@@ -110,12 +110,18 @@ router.get("/sync-status", authenticate, isAdmin, async (req, res) => {
 router.get("/balance", authenticate, isAdmin, async (req, res) => {
   const params = await defaultWalletParams(req.user.id);
   if (!params) return noWallet(res);
-  const data = await executeZingoCliBalance("balance", params);
-
-  // ✅ Send balance only to the requesting admin (not broadcast)
-  sendToUser(req.user.id, "balance_fetched", { balance: data });
-
-  res.json(data);
+  try {
+    const data = await executeZingoCliBalance("balance", params);
+    // Send balance only to the requesting admin (not broadcast)
+    sendToUser(req.user.id, "balance_fetched", { balance: data });
+    res.json(data);
+  } catch (err) {
+    console.error("balance failed:", err.message);
+    res.status(503).json({
+      error: "Balance unavailable",
+      details: err.message,
+    });
+  }
 });
 
 router.post("/accounts", authenticate, async (req, res) => {
