@@ -11,6 +11,7 @@ const { hideOtherUsersEmails } = require("./middleware/hideOtherUsersEmails");
 const { WebSocketServer } = require("ws");
 const prisma = require("./prisma/client");
 const { connectRedis } = require("./config/redis");
+const { startDeadlineReminderJob } = require("./utils/deadlineReminders");
 
 const app = express();
 const server = createServer(app);
@@ -40,6 +41,7 @@ app.use("/api/users", require("./routes/users"));
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/leaderboard", require("./routes/leaderboard"));
 app.use("/api/admin", require("./routes/versions"));
+app.use("/api/admin", require("./routes/adminSettings"));
 
 // WebSocket server
 // SECURITY FIX (S2): reject the upgrade before a socket is ever handed to
@@ -95,6 +97,7 @@ app.use((req, res, next) => {
 const PORT = process.env.PORT || 9001;
 server.listen(PORT, async () => {
   await connectRedis();
+  startDeadlineReminderJob();
   console.log(`Server running on port ${PORT}`);
   console.log(`WebSocket endpoint: ws://localhost:${PORT}`);
 });
