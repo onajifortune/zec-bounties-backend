@@ -3092,8 +3092,11 @@ router.put("/:id", authenticate, async (req, res) => {
       return res.status(400).json({ error: "Invalid chain value" });
     }
 
-    if (req.body.teamId && req.user.role !== "ADMIN") {
-      // Non-admins can't move a bounty to a different team via edit
+    if (
+      Object.prototype.hasOwnProperty.call(req.body, "teamId") &&
+      req.user.role !== "ADMIN"
+    ) {
+      // Non-admins can't move a bounty to a different team via edit, including clearing it
       return res.status(403).json({ error: "Cannot reassign team" });
     }
 
