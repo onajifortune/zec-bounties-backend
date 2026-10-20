@@ -118,8 +118,8 @@ router.get("/github/callback", async (req, res) => {
     let user = await prisma.user.findFirst({ where: { githubId } });
 
     if (!user) {
-      const byEmail = await prisma.user.findUnique({
-        where: { email: primaryEmail },
+      const byEmail = await prisma.user.findFirst({
+        where: { email: { equals: primaryEmail, mode: "insensitive" } },
       });
 
       if (byEmail) {
