@@ -62,11 +62,18 @@ async function getBroadcastRecipients(bounty) {
   admins.forEach((a) => recipients.add(a.id));
 
   if (bounty.teamId) {
-    const members = await prisma.teamMember.findMany({
-      where: { teamId: bounty.teamId },
-      select: { userId: true },
-    });
+    const [members, favorites] = await Promise.all([
+      prisma.teamMember.findMany({
+        where: { teamId: bounty.teamId },
+        select: { userId: true },
+      }),
+      prisma.teamFavorite.findMany({
+        where: { teamId: bounty.teamId },
+        select: { userId: true },
+      }),
+    ]);
     members.forEach((m) => recipients.add(m.userId));
+    favorites.forEach((f) => recipients.add(f.userId));
   }
 
   return [...recipients];
