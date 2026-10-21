@@ -238,10 +238,10 @@ test("private-team bounty events reach only that team's audience", async (t) => 
 
   await broadcastBountyEvent("bounty_updated", bountyPayload(), "b1", null);
 
-  for (const id of ["owner", "member", "admin"]) {
+  for (const id of ["owner", "member", "admin", "fan"]) {
     assert.equal(eventsOf(sockets[id], "bounty_updated").length, 1, `${id} should receive it`);
   }
-  for (const id of ["fan", "outsider"]) {
+  for (const id of ["outsider"]) {
     assert.equal(eventsOf(sockets[id], "bounty_updated").length, 0, `${id} should not receive it`);
   }
 });
@@ -355,10 +355,10 @@ test("directory events: public teams reach everyone, private teams only their au
   await t.test("private team", async (t) => {
     stubTeamLookups(t, { isPrivate: true }, { members: ["member"], favoriters: ["fan"], admins: ["admin"] });
     await broadcastTeamEvent("team_updated", { id: "team1", name: "Team" }, "team1", null);
-    for (const id of ["member", "admin"]) {
+    for (const id of ["member", "admin", "fan"]) {
       assert.equal(eventsOf(sockets[id], "team_updated").length, 1, `${id} should receive it`);
     }
-    for (const id of ["fan", "outsider"]) {
+    for (const id of ["outsider"]) {
       assert.equal(eventsOf(sockets[id], "team_updated").length, 0, `${id} should not receive it`);
     }
   });

@@ -22,6 +22,10 @@ const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo
 const { delCache, deleteCacheByPattern } = require("../utils/cache");
 const { sendUserUpdated } = require("../middleware/websocket");
 const { OtpStore } = require("../helpers/recoveryOtp");
+const {
+  verifiedPrimaryEmail,
+  isOtherGithubAccount,
+} = require("../helpers/githubLogin");
 
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET;
@@ -104,18 +108,19 @@ router.get("/github/callback", async (req, res) => {
     );
 
     const githubUser = userResponse.data;
-    const emails = emailResponse.data;
-
-    // Only a verified primary email counts. No profile-email fallback.
-    const primary = emails.find((e) => e.primary && e.verified);
-    if (!primary) {
-      return res.redirect(`${FRONTEND_URL}/login?error=unverified_email`);
-    }
-    const primaryEmail = primary.email.toLowerCase();
     const githubId = githubUser.id.toString();
+    const primaryEmail = verifiedPrimaryEmail(emailResponse.data);
+    if (!primaryEmail) {
+      console.log("No verified primary email for GitHub user");
+      return res.redirect(`${FRONTEND_URL}/login?error=no_email`);
+    }
 
     // 1. Key on the immutable GitHub ID first.
     let user = await prisma.user.findFirst({ where: { githubId } });
+    if (isOtherGithubAccount(user, githubId)) {
+      console.log("Email belongs to an account linked to another GitHub user");
+      return res.redirect(`${FRONTEND_URL}/login?error=account_mismatch`);
+    }
 
     if (!user) {
       const byEmail = await prisma.user.findFirst({
