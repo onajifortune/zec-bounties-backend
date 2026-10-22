@@ -627,26 +627,38 @@ router.get("/", optionalAuthenticate, async (req, res) => {
     }
 
     // ------------------------------------------------------------
+    // Audience
+    //
+    // Team bounties belong to hunters (home feed) and the team
+    // console. The admin console lists platform bounties (no team)
+    // plus pending hunter suggestions awaiting review. Filtered in
+    // SQL so `take` returns a full page and `total` matches what
+    // is displayed.
+    // ------------------------------------------------------------
+    const audienceFilter = isAdmin
+      ? { OR: [{ teamId: null }, { suggestionReviewStatus: "PENDING" }] }
+      : {
+          OR: [
+            { suggestionReviewStatus: null },
+            { suggestionReviewStatus: { not: "PENDING" } },
+          ],
+        };
+
+    // ------------------------------------------------------------
     // Combined query filters
+    //
+    // Filters that carry their own OR go in AND, so spreading never
+    // lets one OR overwrite another.
     // ------------------------------------------------------------
     const where = {
       ...chainFilter,
-      ...visibilityFilter,
-      ...userFilter,
-      ...(!isAdmin && {
-        AND: [
-          {
-            OR: [
-              { suggestionReviewStatus: null },
-              { suggestionReviewStatus: { not: "PENDING" } },
-            ],
-          },
-        ],
-      }),
+      AND: [visibilityFilter, userFilter, audienceFilter],
     };
 
     // ------------------------------------------------------------
-    // Cache — scoped by version, privacy version, and viewer
+    // Cache — scoped by version, privacy version, viewer and scope.
+    // `scope` also retires old admin entries that still contain
+    // team bounties.
     // ------------------------------------------------------------
     const version = await getVersion("bounties");
     const privacyVersion = await getVersion("privacy");
@@ -657,6 +669,7 @@ router.get("/", optionalAuthenticate, async (req, res) => {
       chain: chainParam,
       viewer: isAdmin ? "admin" : (userId ?? "anon"),
       user: userTerm || "",
+      scope: isAdmin ? "platform" : "feed",
     })}`;
 
     const cached = await getCache(cacheKey);
