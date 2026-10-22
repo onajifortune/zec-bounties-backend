@@ -523,6 +523,7 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
 router.get("/", optionalAuthenticate, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
+    const teamless = String(req.query.teamless || "") === "true";
     // Clamp to 1..50. A negative value passed Math.min untouched and reached
     // Prisma as `take: -N`, which reads N rows from the end of the ordering
     // with no upper bound.
@@ -604,20 +605,30 @@ router.get("/", optionalAuthenticate, async (req, res) => {
       if (involves) userFilter = involves;
     }
 
+    const andClauses = [];
+
+    if (!isAdmin) {
+      andClauses.push({
+        OR: [
+          { suggestionReviewStatus: null },
+          { suggestionReviewStatus: { not: "PENDING" } },
+        ],
+      });
+    }
+
+    // Platform-level list: bounties without a team, plus pending hunter
+    // suggestions awaiting admin review. Done in SQL so pages stay full.
+    if (teamless) {
+      andClauses.push({
+        OR: [{ teamId: null }, { suggestionReviewStatus: "PENDING" }],
+      });
+    }
+
     const where = {
       ...chainFilter,
       ...visibilityFilter,
       ...userFilter,
-      ...(!isAdmin && {
-        AND: [
-          {
-            OR: [
-              { suggestionReviewStatus: null },
-              { suggestionReviewStatus: { not: "PENDING" } },
-            ],
-          },
-        ],
-      }),
+      ...(andClauses.length > 0 && { AND: andClauses }),
     };
 
     // ------------------------------------------------------------
@@ -634,6 +645,7 @@ router.get("/", optionalAuthenticate, async (req, res) => {
       chain: chainParam,
       viewer: isAdmin ? "admin" : (userId ?? "anon"),
       user: userTerm || "",
+      teamless,
     })}`;
 
     const cached = await getCache(cacheKey);
