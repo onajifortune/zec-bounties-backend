@@ -4,6 +4,7 @@ const { authenticate, isAdmin } = require("../middleware/auth");
 const { delCache, bumpVersion } = require("../utils/cache");
 const { userIdentityWhere } = require("../utils/userIdentity");
 const { rawAddressFields } = require("../helpers/publicProfileAddress");
+const { receiversForUser } = require("../helpers/addressReceivers");
 const {
   assignedDoneWhere,
   recentCompletedWhere,
@@ -28,6 +29,7 @@ const DEFAULT_VISIBILITY = {
   showRole: false,
   showGithub: false,
   showDiscord: false,
+  showTeams: false,
 };
 
 const VISIBILITY_KEYS = Object.keys(DEFAULT_VISIBILITY);
@@ -304,7 +306,14 @@ router.get("/:idOrNickname/public", async (req, res) => {
     const key = String(req.params.idOrNickname || "").trim();
     if (!key) return res.status(400).json({ error: "User id required" });
 
-    const resolved = await resolveStaffUser(prisma, key, PUBLIC_PROFILE_SELECT);
+    const resolved = await resolveStaffUser(
+      prisma,
+      key,
+      PUBLIC_PROFILE_SELECT,
+      {
+        matchName: false,
+      },
+    );
     if (!resolved.user) {
       return res.status(resolved.status).json({ error: resolved.error });
     }
@@ -336,28 +345,28 @@ router.get("/:idOrNickname/public", async (req, res) => {
 
     // The recent lists carry titles, so private bounties stay out of them
     // unless the viewer is the profile owner or an admin.
-    const [stats, teams] = await Promise.all([
-      loadStats(user.id, isOwner || isAdmin),
-      Promise.resolve(
-        (user.teamMembers || []).map((row) => ({
-          id: row.team.id,
-          name: row.team.name,
-          logo: row.team.logo,
-          isVerified: row.team.isVerified,
-          memberRole: row.role,
-        })),
-      ),
-    ]);
+    const stats = await loadStats(user.id, isOwner || isAdmin);
 
     const profile = {
       id: user.id,
       visibility,
       isOwner,
       isAdminViewer: isAdmin,
-      teams,
     };
 
     const show = (flag) => forceFull || visibility[flag] === true;
+
+    // Team memberships reveal an account even when the display name is
+    // hidden. Owner, admin, or an explicit showTeams opt-in only.
+    if (show("showTeams")) {
+      profile.teams = (user.teamMembers || []).map((row) => ({
+        id: row.team.id,
+        name: row.team.name,
+        logo: row.team.logo,
+        isVerified: row.team.isVerified,
+        memberRole: row.role,
+      }));
+    }
 
     function redactChainStats(src) {
       const out = {};
@@ -482,12 +491,10 @@ router.get("/:idOrNickname/public", async (req, res) => {
       // showAddressType advertises the KIND of address, not the address itself.
       Object.assign(profile, rawAddressFields(user, { isOwner, isAdmin }));
 
-      // Start empty; frontend fills from WASM (or falls back below)
-      profile.receivers = {
-        ironwood: false,
-        sapling: false,
-        transparent: false,
-      };
+      // Visitors no longer receive the raw address, so the icons cannot decode
+      // it client-side. Return the three flags instead. Owner/admin still get
+      // the address and may refine these with the browser WASM decoder.
+      profile.receivers = await receiversForUser(user);
     }
     if (show("showRecentBounties")) {
       profile.recentCompleted = stripAmountsIfPrivate(

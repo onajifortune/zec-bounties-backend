@@ -125,8 +125,15 @@ function fixture(status = "IN_PROGRESS", submissionStatus = "pending") {
     },
     "../utils/bountyHelpers": {
       requireOnboarded: () => true,
-      broadcastBountyEvent: async (type, payload, bountyId, excludeUserId) => {
-        trace.push({ type, payload, bountyId, excludeUserId });
+      getSubmissionRecipients: async (bountyId, submitterId) =>
+        [row.createdBy, submitterId, "admin"].filter(Boolean),
+      withoutSubmissionBodies: bounty => {
+        if (!bounty || !Array.isArray(bounty.workSubmissions)) return bounty;
+        const { workSubmissions, ...rest } = bounty;
+        return rest;
+      },
+      broadcastBountyEvent: async (type, payload, bountyId, excludeUserId, recipients) => {
+        trace.push({ type, payload, bountyId, excludeUserId, recipients });
       },
       invalidateBounty: async id => {
         version++;

@@ -19,6 +19,8 @@ const {
 const {
   broadcastBountyEvent,
   broadcastTeamEvent,
+  getSubmissionRecipients,
+  withoutSubmissionBodies,
 } = require("../utils/bountyHelpers");
 
 // Minimal stand-in for a `ws` socket: records what it was sent.
@@ -363,3 +365,48 @@ test("directory events: public teams reach everyone, private teams only their au
     }
   });
 });
+
+test("submission bodies reach only the REST audience", async (t) => {
+  stubBountyLookups(
+    t,
+    { isPrivate: false, createdBy: "owner", teamId: null },
+    { admins: ["admin"] },
+  );
+  const sockets = Object.fromEntries(
+    ["owner", "admin", "submitter", "assignee", "outsider"].map((id) => [id, connect(id)]),
+  );
+  t.after(() => Object.values(sockets).forEach((ws) => ws.disconnect()));
+
+  const audience = await getSubmissionRecipients("b1", "submitter");
+  assert.deepEqual(audience.sort(), ["admin", "owner", "submitter"]);
+
+  await broadcastBountyEvent(
+    "work_submitted",
+    { id: "s1", bountyId: "b1", description: "secret deliverable", submittedBy: "submitter" },
+    "b1",
+    null,
+    audience,
+  );
+
+  for (const id of ["owner", "admin", "submitter"]) {
+    assert.equal(eventsOf(sockets[id], "work_submitted").length, 1, `${id} should receive it`);
+  }
+  for (const id of ["assignee", "outsider"]) {
+    assert.equal(eventsOf(sockets[id], "work_submitted").length, 0, `${id} should not receive it`);
+  }
+});
+
+test("wide bounty updates drop submission bodies", () => {
+  const bounty = {
+    id: "b1",
+    status: "IN_REVIEW",
+    title: "task",
+    workSubmissions: [{ id: "s1", description: "secret deliverable" }],
+  };
+  const out = withoutSubmissionBodies(bounty);
+  assert.equal(out.status, "IN_REVIEW");
+  assert.equal(out.title, "task");
+  assert.equal(out.workSubmissions, undefined);
+  assert.equal(bounty.workSubmissions.length, 1, "source is not mutated");
+});
+

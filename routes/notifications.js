@@ -2,6 +2,12 @@ const express = require("express");
 const prisma = require("../prisma/client"); // shared client, not a new one
 const router = express.Router();
 const { authenticate } = require("../middleware/auth");
+const { isAllowedPushEndpoint } = require("../utils/pushEndpoint");
+
+// One per browser or device; the oldest go first when a user passes this.
+const MAX_PUSH_SUBSCRIPTIONS = 5;
+const isKey = (value) =>
+  typeof value === "string" && /^[A-Za-z0-9_-]{1,128}={0,2}$/.test(value);
 
 router.get("/", authenticate, async (req, res) => {
   try {
@@ -58,7 +64,13 @@ router.post("/push/subscribe", authenticate, async (req, res) => {
   try {
     const { endpoint, keys } = req.body;
 
-    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+    if (
+      typeof endpoint !== "string" ||
+      endpoint.length > 1024 ||
+      !isAllowedPushEndpoint(endpoint) ||
+      !isKey(keys?.p256dh) ||
+      !isKey(keys?.auth)
+    ) {
       return res.status(400).json({ error: "Invalid push subscription" });
     }
 
@@ -76,6 +88,18 @@ router.post("/push/subscribe", authenticate, async (req, res) => {
         auth: keys.auth,
       },
     });
+
+    const extra = await prisma.pushSubscription.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: "desc" },
+      skip: MAX_PUSH_SUBSCRIPTIONS,
+      select: { id: true },
+    });
+    if (extra.length) {
+      await prisma.pushSubscription.deleteMany({
+        where: { id: { in: extra.map((s) => s.id) } },
+      });
+    }
 
     res.json({ success: true });
   } catch (error) {
