@@ -38,14 +38,30 @@ const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
 const DISCORD_REDIRECT_URI = `${process.env.BACKEND_URL || "http://localhost:5000"}/auth/discord/callback`;
 
+const STATE_COOKIE = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: process.env.NODE_ENV === "production",
+  maxAge: 10 * 60 * 1000,
+};
+
+// The login page makes its own state and checks it again on its callback page,
+// so a link that carries someone else's token cannot sign a user in. The
+// backend only carries it, so the format check is all it needs.
+const LOGIN_STATE = /^[0-9a-f]{64}$/;
+const isLoginState = (value) =>
+  typeof value === "string" && LOGIN_STATE.test(value);
+
 router.get("/github", (req, res) => {
+  const { state: loginState } = req.query;
+  if (loginState !== undefined && !isLoginState(loginState)) {
+    return res.redirect(`${FRONTEND_URL}/login?error=oauth_failed`);
+  }
+  if (loginState) res.cookie("gh_login_state", loginState, STATE_COOKIE);
+  else res.clearCookie("gh_login_state");
+
   const state = crypto.randomBytes(16).toString("hex");
-  res.cookie("gh_state", state, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: 10 * 60 * 1000,
-  });
+  res.cookie("gh_state", state, STATE_COOKIE);
   res.redirect(
     `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&scope=user:email&state=${state}`,
   );
@@ -59,6 +75,8 @@ router.get("/github/callback", async (req, res) => {
     return res.redirect(`${FRONTEND_URL}/login?error=oauth_failed`);
   }
   res.clearCookie("gh_state");
+  const loginState = req.cookies?.gh_login_state;
+  res.clearCookie("gh_login_state");
 
   if (error) {
     console.log(`GitHub OAuth error: ${error} - ${error_description}`);
@@ -153,7 +171,8 @@ router.get("/github/callback", async (req, res) => {
 
     const token = signSessionToken(user);
 
-    res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
+    const returnState = isLoginState(loginState) ? `&state=${loginState}` : "";
+    res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}${returnState}`);
   } catch (error) {
     console.error("GitHub OAuth error:", error.message);
     res.redirect(`${FRONTEND_URL}/login?error=oauth_failed`);
