@@ -1,14 +1,18 @@
 const { spawn } = require("child_process");
-const { existsSync } = require("fs");
+const { existsSync, readdirSync } = require("fs");
 
-async function executeZingoCliSeed(params, seed, birthday) {
+const ANSI = /\u001b\[[0-9;]*m/g;
+
+async function executeZingoCliSeed(params, seed, birthday, timeout = 180000) {
   const zingoPath = process.env.ZINGO_CLI;
-  if (!existsSync(zingoPath)) {
+  if (!zingoPath || !existsSync(zingoPath)) {
     throw new Error(`zingo-cli not found at ${zingoPath}`);
   }
   if (typeof seed !== "string" || !seed.trim()) {
     throw new Error("Seed phrase required");
   }
+
+  const dataDir = params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino";
 
   const args = [
     "--chain",
@@ -16,47 +20,88 @@ async function executeZingoCliSeed(params, seed, birthday) {
     "--server",
     params.serverUrl || "http://127.0.0.1:8137",
     "--data-dir",
-    params.dataDir || "/mnt/d/zaino/zebra/.cache/zaino",
+    dataDir,
+    "--seed",
+    seed,
     "--birthday",
     String(birthday || 0),
   ];
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(zingoPath, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ZINGO_SEED: seed },
-    });
+    // stdin must stay open: the REPL exits on EOF.
+    const proc = spawn(zingoPath, args, { stdio: ["pipe", "pipe", "pipe"] });
 
     let stdout = "";
     let stderr = "";
-    proc.stdout.on("data", (data) => {
-      stdout += data.toString();
+    let quitSent = false;
+    let settled = false;
+
+    const sendQuit = () => {
+      if (quitSent || proc.stdin.destroyed) return;
+      quitSent = true;
+      proc.stdin.write("quit\n");
+    };
+
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(fallback);
+      fn(value);
+    };
+
+    // Give the CLI a chance to launch sync/save, then quit so it saves.
+    const maybeReady = () => {
+      const all = (stdout + stderr).replace(ANSI, "");
+      if (/Launching save task/i.test(all)) setTimeout(sendQuit, 2000);
+    };
+
+    proc.stdout.on("data", (d) => {
+      const text = d.toString();
+      stdout += text;
+      // console.log("ZINGO SEED STDOUT:", text.replace(ANSI, ""));
+      maybeReady();
     });
-    proc.stderr.on("data", (data) => {
-      stderr += data.toString();
+
+    proc.stderr.on("data", (d) => {
+      const text = d.toString();
+      stderr += text;
+      // console.log("ZINGO SEED STDERR:", text.replace(ANSI, ""));
+      maybeReady();
     });
-    proc.on("error", reject);
-    proc.on("close", (code) => {
+
+    proc.stdin.on("error", (e) =>
+      console.error("ZINGO SEED STDIN:", e.message),
+    );
+    proc.on("error", (e) => finish(reject, e));
+
+    // If the markers never appear, quit anyway after 60s.
+    const fallback = setTimeout(sendQuit, 60000);
+
+    const timer = setTimeout(() => {
+      proc.kill();
+      finish(reject, new Error("Zingo seed restore timeout"));
+    }, timeout);
+
+    proc.on("close", (code, signal) => {
+      // console.log("ZINGO SEED EXIT:", { code, signal });
+      // try {
+      //   console.log("ZINGO SEED DATA DIR:", readdirSync(dataDir));
+      // } catch (e) {
+      //   console.log("ZINGO SEED DATA DIR unreadable:", e.message);
+      // }
+
       if (code !== 0) {
-        reject(
-          new Error(
-            `Zingo CLI error: ${stderr || stdout || `process exited with code ${code}`}`,
-          ),
+        return finish(
+          reject,
+          new Error(`Zingo CLI exited with code ${code}: ${stderr || stdout}`),
         );
-        return;
       }
-      const noAnsi = stdout.replace(/\u001b\[[0-9;]*m/g, "");
-      const jsonBlocks = noAnsi.match(/\{[\s\S]*?\}/g) || [];
-      const parsed = jsonBlocks
-        .map((block) => {
-          try {
-            return JSON.parse(block);
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-      resolve(parsed.length === 1 ? parsed[0] : parsed);
+
+      finish(resolve, {
+        message: "Wallet restored",
+        output: stdout.replace(ANSI, ""),
+      });
     });
   });
 }

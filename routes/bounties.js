@@ -57,6 +57,7 @@ const {
   createBountyWithQuota,
   WeeklyBountyQuotaError,
   requireTaskCreation,
+  validateBountyChain,
 } = require("../utils/bountyHelpers");
 const {
   userIdentityWhere,
@@ -400,8 +401,11 @@ router.post("/", authenticate, requireTaskCreation, async (req, res) => {
       return res.status(400).json({ error: "Invalid targetRepo" });
     }
 
-    if (chain && !["MAIN", "TEST"].includes(chain)) {
-      return res.status(400).json({ error: "Invalid chain value" });
+    const chainError = validateBountyChain(chain);
+    if (chainError) {
+      return res
+        .status(chain === "TEST" ? 403 : 400)
+        .json({ error: chainError });
     }
 
     let team = null;
@@ -3123,6 +3127,7 @@ router.put("/:id", authenticate, async (req, res) => {
       select: {
         createdBy: true,
         teamId: true,
+        chain: true,
         status: true,
         isPaid: true,
         paymentAuthorized: true,
@@ -3132,7 +3137,6 @@ router.put("/:id", authenticate, async (req, res) => {
         description: true,
         bountyAmount: true,
         timeToComplete: true,
-        status: true,
         isApproved: true,
       },
     });
@@ -3152,6 +3156,18 @@ router.put("/:id", authenticate, async (req, res) => {
       return res.status(400).json({ error: bodyValidation.error });
     }
 
+    const chainChanged =
+      req.body.chain !== undefined && req.body.chain !== existing.chain;
+
+    if (chainChanged) {
+      const chainError = validateBountyChain(req.body.chain);
+      if (chainError) {
+        return res
+          .status(req.body.chain === "TEST" ? 403 : 400)
+          .json({ error: chainError });
+      }
+    }
+
     // `assignee` and `bountyAmount` decide WHO is paid and HOW MUCH, and the
     // payout batch reads them live at send time. A plain bounty creator must
     // not be able to change them — only a global/team admin — and they must be
@@ -3162,8 +3178,10 @@ router.put("/:id", authenticate, async (req, res) => {
     // unchanged amount is not a payout edit.
     const editsPayoutFields =
       req.body.assignee !== undefined ||
+      chainChanged ||
       (req.body.bountyAmount !== undefined &&
         Number(req.body.bountyAmount) !== Number(existing.bountyAmount));
+
     if (editsPayoutFields) {
       if (!(await canAdministerBounty(existing, req.user))) {
         return res.status(403).json({
@@ -3202,13 +3220,6 @@ router.put("/:id", authenticate, async (req, res) => {
       return res
         .status(403)
         .json({ error: "Only admins can change approval status" });
-    }
-
-    if (
-      req.body.chain !== undefined &&
-      !["MAIN", "TEST"].includes(req.body.chain)
-    ) {
-      return res.status(400).json({ error: "Invalid chain value" });
     }
 
     if (
@@ -3301,7 +3312,7 @@ router.put("/:id", authenticate, async (req, res) => {
           timeToComplete: new Date(req.body.timeToComplete),
         }),
         ...(req.body.assignee !== undefined && { assignee: req.body.assignee }),
-        ...(req.body.chain !== undefined && { chain: req.body.chain }),
+        ...(chainChanged && { chain: req.body.chain }),
         ...(req.body.isApproved !== undefined && {
           isApproved: req.body.isApproved,
           status: nextStatus,
@@ -3342,7 +3353,9 @@ router.put("/:id", authenticate, async (req, res) => {
         "timeToComplete",
         "chain",
         "teamId",
-      ].filter((k) => req.body[k] !== undefined);
+      ].filter((k) =>
+        k === "chain" ? chainChanged : req.body[k] !== undefined,
+      );
       const entries = [];
       if (approvalChanged)
         entries.push({ type: req.body.isApproved ? "APPROVED" : "UNAPPROVED" });
