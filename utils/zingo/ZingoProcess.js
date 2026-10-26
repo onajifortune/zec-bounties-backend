@@ -403,7 +403,7 @@ class ZingoProcess {
     });
   }
 
-  rescan(command, timeout = 180000) {
+  rescan(command, timeout = 360000) {
     return new Promise((resolve, reject) => {
       let buffer = "";
       let resolved = false;
@@ -451,7 +451,7 @@ class ZingoProcess {
     });
   }
 
-  sync(command, timeout = 180000) {
+  sync(command, timeout = 360000) {
     return new Promise((resolve, reject) => {
       const startBufferLen = this.buffer.length;
 
@@ -565,7 +565,7 @@ class ZingoProcess {
     });
   }
 
-  balance(command, timeout = 180000) {
+  balance(command, timeout = 360000) {
     return new Promise((resolve, reject) => {
       let buffer = "";
 
@@ -697,7 +697,7 @@ class ZingoProcess {
   }
 
   // Resolves with { txids, error, timedOut, raw, stderr }.
-  async quicksend(recipients, timeout = 180000) {
+  async quicksend(recipients, timeout = 360000) {
     log(
       "quicksend",
       `called with ${recipients.length} recipient(s)`,
@@ -820,7 +820,7 @@ class ZingoProcess {
     }, "quicksend");
   }
 
-  transactions(timeout = 180000) {
+  transactions(timeout = 360000) {
     const command = "transactions";
     return new Promise((resolve, reject) => {
       let buffer = "";
@@ -933,7 +933,7 @@ class ZingoProcess {
     });
   }
 
-  info(command = "info", timeout = 180000) {
+  info(command = "info", timeout = 360000) {
     return new Promise((resolve, reject) => {
       let buffer = "";
 
