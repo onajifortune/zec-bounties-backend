@@ -20,32 +20,17 @@ function loadRoutes() {
     crypto,
     express: {
       Router: () =>
-        new Proxy(
-          {},
-          {
-            get:
-              (_, method) =>
-              (url, ...handlers) => {
-                routes[`${method} ${url}`] = handlers;
-              },
-          },
-        ),
+        new Proxy({}, { get: (_, method) => (url, ...handlers) => { routes[`${method} ${url}`] = handlers; } }),
     },
     axios: {
       post: async () => ({ data: { access_token: "gh-token" } }),
       get: async (url) =>
         url.endsWith("/emails")
-          ? {
-              data: [
-                { email: "dev@example.com", primary: true, verified: true },
-              ],
-            }
+          ? { data: [{ email: "dev@example.com", primary: true, verified: true }] }
           : { data: { id: 1, login: "dev", avatar_url: "" } },
     },
     "../prisma/client": {
-      user: {
-        findFirst: async () => ({ id: "u1", githubId: "1", role: "HUNTER" }),
-      },
+      user: { findFirst: async () => ({ id: "u1", githubId: "1", role: "HUNTER" }) },
     },
     "../middleware/auth": { signSessionToken: () => "session-token" },
     "../helpers/githubLogin": {
@@ -65,8 +50,7 @@ function loadRoutes() {
     {
       module,
       exports: module.exports,
-      require: (name) =>
-        Object.hasOwn(dependencies, name) ? dependencies[name] : anything,
+      require: (name) => (Object.hasOwn(dependencies, name) ? dependencies[name] : anything),
       console: { log() {}, error() {} },
       process: { env: { FRONTEND_URL: "https://app.test" } },
     },
@@ -89,11 +73,7 @@ function loadRoutes() {
 async function login(call, startQuery) {
   const start = await call("get /github", startQuery);
   const githubState = new URL(start.location).searchParams.get("state");
-  return call(
-    "get /github/callback",
-    { code: "c", state: githubState },
-    start.cookies,
-  );
+  return call("get /github/callback", { code: "c", state: githubState }, start.cookies);
 }
 
 test("the GitHub callback returns the login page's state with the token", async () => {
@@ -107,20 +87,12 @@ test("the GitHub callback returns the login page's state with the token", async 
 
 test("the login page's state is not sent to GitHub", async () => {
   const start = await loadRoutes()("get /github", { state: LOGIN_STATE });
-  assert.notEqual(
-    new URL(start.location).searchParams.get("state"),
-    LOGIN_STATE,
-  );
+  assert.notEqual(new URL(start.location).searchParams.get("state"), LOGIN_STATE);
 });
 
 test("GitHub login with a malformed state is refused", async () => {
   const call = loadRoutes();
-  for (const state of [
-    "",
-    "short",
-    `${LOGIN_STATE}&scope=repo`,
-    [LOGIN_STATE],
-  ]) {
+  for (const state of ["", "short", `${LOGIN_STATE}&scope=repo`, [LOGIN_STATE]]) {
     assert.equal((await call("get /github", { state })).location, FAILED);
   }
 });
