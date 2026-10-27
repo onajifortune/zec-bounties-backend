@@ -21,15 +21,16 @@ async function executeZingoCliSeed(params, seed, birthday, timeout = 180000) {
     params.serverUrl || "http://127.0.0.1:8137",
     "--data-dir",
     dataDir,
-    "--seed",
-    seed,
     "--birthday",
     String(birthday || 0),
   ];
 
   return new Promise((resolve, reject) => {
     // stdin must stay open: the REPL exits on EOF.
-    const proc = spawn(zingoPath, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(zingoPath, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, ZINGO_SEED: seed },
+    });
 
     let stdout = "";
     let stderr = "";
@@ -59,14 +60,12 @@ async function executeZingoCliSeed(params, seed, birthday, timeout = 180000) {
     proc.stdout.on("data", (d) => {
       const text = d.toString();
       stdout += text;
-      // console.log("ZINGO SEED STDOUT:", text.replace(ANSI, ""));
       maybeReady();
     });
 
     proc.stderr.on("data", (d) => {
       const text = d.toString();
       stderr += text;
-      // console.log("ZINGO SEED STDERR:", text.replace(ANSI, ""));
       maybeReady();
     });
 
@@ -84,13 +83,6 @@ async function executeZingoCliSeed(params, seed, birthday, timeout = 180000) {
     }, timeout);
 
     proc.on("close", (code, signal) => {
-      // console.log("ZINGO SEED EXIT:", { code, signal });
-      // try {
-      //   console.log("ZINGO SEED DATA DIR:", readdirSync(dataDir));
-      // } catch (e) {
-      //   console.log("ZINGO SEED DATA DIR unreadable:", e.message);
-      // }
-
       if (code !== 0) {
         return finish(
           reject,
