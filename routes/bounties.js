@@ -3145,9 +3145,19 @@ router.get("/:id/activity", authenticate, async (req, res) => {
       select: { id: true, createdBy: true, teamId: true },
     });
     if (!bounty) return res.status(404).json({ error: "Bounty not found" });
-    if (req.user.role !== "ADMIN") {
-      return res.status(403).json({ error: "Access denied" });
+
+    // Same audience as publishActivity: global admin, creator, team OWNER/ADMIN
+    let allowed = req.user.role === "ADMIN" || bounty.createdBy === req.user.id;
+    if (!allowed && bounty.teamId) {
+      const member = await prisma.teamMember.findUnique({
+        where: {
+          teamId_userId: { teamId: bounty.teamId, userId: req.user.id },
+        },
+        select: { role: true },
+      });
+      allowed = Boolean(member && ["OWNER", "ADMIN"].includes(member.role));
     }
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const activity = await prisma.bountyActivity.findMany({
       where: { bountyId: bounty.id },
