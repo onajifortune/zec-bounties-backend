@@ -17,7 +17,9 @@ const executeZingoCliRescan = require("../utils/zingo/zingoLibRescan.js");
 const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo.js");
 const executeZingoCliQuit = require("../utils/zingo/zingoLibQuit.js");
 const executeZingoCliBalance = require("../utils/zingo/zingoLibBalance.js");
-const { resolvePayingWallet } = require("../helpers/zcash/resolvePayingWallet");
+const {
+  resolvePayingWallet,
+} = require("../helpers/zcash/resolvePayingWallet.js");
 const { invalidateBounty } = require("../utils/bountyHelpers");
 const executeZingoCliInfo = require("../utils/zingo/zingoLibInfo");
 const { randomUUID } = require("crypto");

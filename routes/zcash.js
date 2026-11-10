@@ -14,7 +14,7 @@ const {
 const executeZingoCliInfo = require("../utils/zingo/zingoLibInfo");
 const {
   validateWalletConnection,
-} = require("../helpers/zcash/walletConnection");
+} = require("../helpers/zcash/walletConnection.js");
 
 const { sendToUser } = require("../middleware/websocket");
 

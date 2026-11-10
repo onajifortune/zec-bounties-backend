@@ -4,6 +4,7 @@ const axios = require("axios");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const prisma = require("../prisma/client");
+const { buildCallbackRedirect } = require("../helpers/authRedirect.js");
 const {
   authenticate,
   isAdmin,
@@ -19,13 +20,17 @@ const {
 } = require("../helpers/zcash/zcashHelper.js");
 const sendMail = require("../utils/sendMail");
 const executeZingoCliRecoveryInfo = require("../utils/zingo/zingoLibRecoveryInfo");
-const { delCache, deleteCacheByPattern } = require("../utils/cache");
+const {
+  delCache,
+  deleteCacheByPattern,
+  invalidateUserDirectory,
+} = require("../utils/cache");
 const { sendUserUpdated } = require("../middleware/websocket");
-const { OtpStore } = require("../helpers/recoveryOtp");
+const { OtpStore } = require("../helpers/recoveryOtp.js");
 const {
   verifiedPrimaryEmail,
   isOtherGithubAccount,
-} = require("../helpers/githubLogin");
+} = require("../helpers/githubLogin.js");
 
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET;
@@ -168,35 +173,29 @@ router.get("/github/callback", async (req, res) => {
         },
       });
     }
+    await invalidateUserDirectory();
 
     const token = signSessionToken(user);
 
-    const returnState = isLoginState(loginState) ? `&state=${loginState}` : "";
-    res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}${returnState}`);
+    // Deliver the session token in the URL fragment, not the query string, so
+    // the 7-day bearer can't leak via server logs or the Referer header.
+    const state = isLoginState(loginState) ? loginState : null;
+    res.redirect(buildCallbackRedirect(FRONTEND_URL, token, state));
   } catch (error) {
     console.error("GitHub OAuth error:", error.message);
     res.redirect(`${FRONTEND_URL}/login?error=oauth_failed`);
   }
 });
 
-// Step 1: authenticated user clicks "Connect Discord" — frontend navigates
-// here with their JWT as a query param (redirects can't carry headers).
-// We re-sign that identity into a short-lived state token so the callback
-// (a plain GET from Discord, no auth header either) knows who to attach to.
-router.get("/discord", (req, res) => {
-  const { token } = req.query;
-  if (!token) {
-    return res.redirect(`${FRONTEND_URL}/profile?discord=error`);
-  }
-
-  let userId;
-  try {
-    userId = jwt.verify(token, SECRET).id;
-  } catch {
-    return res.redirect(`${FRONTEND_URL}/profile?discord=error`);
-  }
-
-  const state = jwt.sign({ userId }, SECRET, { expiresIn: "10m" });
+// Step 1: the authenticated user clicks "Connect Discord". The frontend FETCHES
+// this with its bearer token in the Authorization header — never in the URL —
+// and we return the Discord authorize URL for it to navigate to. Minting the
+// identity from the authenticated session (req.user.id) rather than a
+// query-string token keeps the 7-day session JWT out of URLs/logs/Referer. The
+// short-lived `state` carries the user id to the callback (a plain GET from
+// Discord that has no auth header of its own).
+router.get("/discord", authenticate, (req, res) => {
+  const state = jwt.sign({ userId: req.user.id }, SECRET, { expiresIn: "10m" });
 
   const params = new URLSearchParams({
     client_id: DISCORD_CLIENT_ID,
@@ -206,7 +205,7 @@ router.get("/discord", (req, res) => {
     state,
   });
 
-  res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+  res.json({ url: `https://discord.com/api/oauth2/authorize?${params}` });
 });
 
 router.get("/discord/callback", async (req, res) => {
@@ -262,7 +261,7 @@ router.get("/discord/callback", async (req, res) => {
       },
     });
 
-    await delCache("users:all");
+    await invalidateUserDirectory();
     sendUserUpdated(userId, updated);
 
     res.redirect(`${FRONTEND_URL}/profile?discord=success`);
@@ -298,7 +297,7 @@ router.delete("/discord", authenticate, async (req, res) => {
       },
     });
 
-    await delCache("users:all");
+    await invalidateUserDirectory();
     sendUserUpdated(req.user.id, updated);
 
     res.json({ user: updated });
@@ -398,7 +397,7 @@ router.patch("/update-email-notifications", authenticate, async (req, res) => {
       },
     });
 
-    await delCache("users:all");
+    await invalidateUserDirectory();
 
     sendUserUpdated(req.user.id, updated);
 
@@ -507,7 +506,7 @@ router.patch("/update-zaddress", authenticate, async (req, res) => {
       },
     });
 
-    await delCache("users:all");
+    await invalidateUserDirectory();
 
     res.json({
       message: "Z-address updated successfully",
@@ -713,7 +712,7 @@ router.patch("/update-ua-address", authenticate, async (req, res) => {
       },
     });
 
-    await delCache("users:all");
+    await invalidateUserDirectory();
 
     res.json({
       message: "Mainnet address updated",
@@ -777,7 +776,7 @@ router.patch("/update-nickname", authenticate, async (req, res) => {
     });
 
     await Promise.all([
-      delCache("users:all"),
+      invalidateUserDirectory(),
       deleteCacheByPattern("bounties:*"),
       deleteCacheByPattern("bounty:*"),
       deleteCacheByPattern("assignees:*"),
@@ -832,7 +831,7 @@ router.patch("/select-role", authenticate, async (req, res) => {
       },
     });
 
-    await delCache("users:all");
+    await invalidateUserDirectory();
 
     sendUserUpdated(req.user.id, updated);
 
