@@ -7,10 +7,10 @@ const {
   optionalAuthenticate,
   AUTH_USER_SELECT,
 } = require("../middleware/auth");
-const { isSettableMemberRole } = require("../helpers/teamRoles.js");
+const { isSettableMemberRole } = require("../helpers/teamRoles");
 const {
   validateWalletConnection,
-} = require("../helpers/zcash/walletConnection.js");
+} = require("../helpers/zcash/walletConnection");
 const { initZcashOnce, initZcashOnceForTeams } = require("../zcash/init");
 const {
   sendRealtimeUpdate,
@@ -26,6 +26,7 @@ const {
   delCache,
   deleteCacheByPattern,
   bumpVersion,
+  invalidateUserDirectory,
   getCache,
   setCache,
   getVersion,
@@ -41,7 +42,7 @@ const { REQUIRED_TEAM_VERIFICATIONS } = require("../utils/constants");
 const {
   validateBountyCreate,
   validateCategory,
-} = require("../helpers/validateBounty.js");
+} = require("../helpers/validateBounty");
 const { bountyUserSelects } = require("../utils/userSelects");
 const { notifyNewBounty } = require("../utils/discord/discordNotify");
 // Discord bot state notice, sent when a payment is confirmed
@@ -727,9 +728,7 @@ router.patch("/convert-role/:userId", authenticate, async (req, res) => {
       select: AUTH_USER_SELECT,
     });
 
-    // Bust the cached "all users" list — /api/bounties/users won't
-    // reflect this role change until the TTL expires otherwise.
-    await delCache("users:all");
+    await invalidateUserDirectory();
 
     for (const teamId of deletedTeamIds) {
       sendRealtimeUpdate("team_deleted", { id: teamId }, req.user.id);
@@ -1646,9 +1645,7 @@ router.patch("/convert-to-hunter/:userId", authenticate, async (req, res) => {
       select: AUTH_USER_SELECT,
     });
 
-    // Bust the cached "all users" list — /api/bounties/users won't
-    // reflect this role change until the TTL expires otherwise.
-    await delCache("users:all");
+    await invalidateUserDirectory();
 
     for (const teamId of deletedTeamIds) {
       sendRealtimeUpdate("team_deleted", { id: teamId }, req.user.id);
