@@ -4,7 +4,7 @@ const axios = require("axios");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const prisma = require("../prisma/client");
-const { buildCallbackRedirect } = require("../helpers/authRedirect.js");
+const { buildCallbackRedirect } = require("../helpers/authRedirect");
 const {
   authenticate,
   isAdmin,
@@ -26,11 +26,11 @@ const {
   invalidateUserDirectory,
 } = require("../utils/cache");
 const { sendUserUpdated } = require("../middleware/websocket");
-const { OtpStore } = require("../helpers/recoveryOtp.js");
+const { OtpStore } = require("../helpers/recoveryOtp");
 const {
   verifiedPrimaryEmail,
   isOtherGithubAccount,
-} = require("../helpers/githubLogin.js");
+} = require("../helpers/githubLogin");
 
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET;
@@ -723,6 +723,34 @@ router.patch("/update-ua-address", authenticate, async (req, res) => {
     res.status(500).json({
       error: "Failed to update UA_address",
     });
+  }
+});
+
+// Admin: record a payout recipient's OFAC check. The OFAC switch on the
+// Export Completed modal and the Export Payments page calls this
+// (updateUserOfac), and the CSV's "OFAC Status" column is read from it.
+router.patch("/users/:userId/ofac", authenticate, isAdmin, async (req, res) => {
+  try {
+    const { ofacVerified } = req.body;
+    if (typeof ofacVerified !== "boolean") {
+      return res.status(400).json({ error: "ofacVerified must be boolean" });
+    }
+
+    const user = await prisma.user.update({
+      where: { id: req.params.userId },
+      data: { ofacVerified },
+      select: { id: true, ofacVerified: true },
+    });
+
+    await delCache("users:all");
+
+    res.json(user);
+  } catch (error) {
+    if (error.code === "P2025") {
+      return res.status(404).json({ error: "User not found" });
+    }
+    console.error("Failed to update OFAC status:", error);
+    res.status(500).json({ error: "Failed to update OFAC status" });
   }
 });
 
