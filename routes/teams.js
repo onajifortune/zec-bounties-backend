@@ -3719,10 +3719,7 @@ router.get(
       ]);
 
       const kind = req.query.kind; // "payout" | "recovery"
-      const payoutOr = [
-        { proposalId: { in: proposals.map((p) => p.id) } },
-        { event: { startsWith: "key." }, actorId: { in: eligible } },
-      ];
+      const payoutOr = [{ proposalId: { in: proposals.map((p) => p.id) } }];
       const recoveryOr = [
         {
           event: { startsWith: "recovery." },
